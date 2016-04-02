@@ -1,0 +1,16 @@
+[package]
+name = "mpi"
+version = "0.0.1"
+authors = ["Peter Jin <peterhaijin@gmail.com>"]
+build = "build.rs"
+
+[lib]
+name = "mpi"
+path = "src/lib.rs"
+
+#[[bin]]
+#name = "test-mpi"
+#path = "tools/test-mpi.rs"
+
+[dependencies]
+libc = "^0.2.*"

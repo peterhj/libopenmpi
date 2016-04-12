@@ -1,11 +1,11 @@
 [package]
-name = "mpi"
+name = "openmpi"
 version = "0.0.1"
 authors = ["Peter Jin <peterhaijin@gmail.com>"]
 build = "build.rs"
 
 [lib]
-name = "mpi"
+name = "openmpi"
 path = "src/lib.rs"
 
 #[[bin]]

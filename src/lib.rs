@@ -1,3 +1,5 @@
+#![feature(optin_builtin_traits)]
+
 extern crate libc;
 
 use ffi::*;
@@ -5,6 +7,8 @@ use ffi::*;
 use libc::{c_void, c_int};
 use std::env;
 use std::ffi::{CString};
+use std::mem::{size_of};
+use std::ptr::{null_mut};
 
 pub mod ffi;
 
@@ -14,25 +18,25 @@ pub trait MpiData {
 
 impl MpiData for u8 {
   fn datatype() -> MPI_Datatype {
-    MPI_BYTE
+    unsafe { MPI_Datatype::BYTE() }
   }
 }
 
 impl MpiData for u64 {
   fn datatype() -> MPI_Datatype {
-    MPI_UNSIGNED_LONG_LONG
+    unsafe { MPI_Datatype::UNSIGNED_LONG_LONG() }
   }
 }
 
 impl MpiData for f32 {
   fn datatype() -> MPI_Datatype {
-    MPI_FLOAT
+    unsafe { MPI_Datatype::FLOAT() }
   }
 }
 
 impl MpiData for f64 {
   fn datatype() -> MPI_Datatype {
-    MPI_DOUBLE
+    unsafe { MPI_Datatype::DOUBLE() }
   }
 }
 
@@ -44,11 +48,72 @@ pub struct MpiSumOp;
 
 impl MpiOp for MpiSumOp {
   fn op() -> MPI_Op {
-    MPI_SUM
+    unsafe { MPI_Op::SUM() }
+  }
+}
+
+pub struct MpiInfo {
+  inner:    MPI_Info,
+}
+
+impl MpiInfo {
+  pub unsafe fn create(_mpi: &Mpi) -> Result<MpiInfo, c_int> {
+    let mut inner = MPI_Info(null_mut());
+    let code = MPI_Info_create(&mut inner as *mut _);
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiInfo{
+      inner:    inner,
+    })
+  }
+}
+
+impl Drop for MpiInfo {
+  fn drop(&mut self) {
+  }
+}
+
+pub struct MpiWindow<T> {
+  buf_addr: *mut T,
+  buf_len:  usize,
+  inner:    MPI_Win,
+}
+
+impl<T> MpiWindow<T> {
+  pub unsafe fn create(buf_addr: *mut T, buf_len: usize, _mpi: &Mpi) -> Result<MpiWindow<T>, c_int> {
+    let info = match MpiInfo::create(_mpi) {
+      Ok(info) => info,
+      Err(e) => return Err(e),
+    };
+    let mut inner = MPI_Win(null_mut());
+    let code = MPI_Win_create(buf_addr as *mut _, MPI_Aint((size_of::<T>() * buf_len) as isize), 0, info.inner, MPI_Comm::WORLD(), &mut inner as *mut _);
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiWindow{
+      buf_addr: buf_addr,
+      buf_len:  buf_len,
+      inner:    inner,
+    })
+  }
+
+  pub unsafe fn rma_get(&self, origin_addr: *mut T, origin_len: usize, target_rank: usize, _mpi: &Mpi) -> Result<(), c_int> {
+    // FIXME(20160412)
+    unimplemented!();
+  }
+}
+
+impl<T> Drop for MpiWindow<T> {
+  fn drop(&mut self) {
+    // FIXME(20160412)
+    unimplemented!();
   }
 }
 
 pub struct Mpi;
+
+impl !Send for Mpi {}
 
 impl Drop for Mpi {
   fn drop(&mut self) {
@@ -72,35 +137,35 @@ impl Mpi {
 
   pub fn size(&self) -> usize {
     let mut size: c_int = 0;
-    unsafe { MPI_Comm_size(MPI_COMM_WORLD, &mut size as *mut _) };
+    unsafe { MPI_Comm_size(MPI_Comm::WORLD(), &mut size as *mut _) };
     size as usize
   }
 
   pub fn rank(&self) -> usize {
     let mut rank: c_int = 0;
-    unsafe { MPI_Comm_rank(MPI_COMM_WORLD, &mut rank as *mut _) };
+    unsafe { MPI_Comm_rank(MPI_Comm::WORLD(), &mut rank as *mut _) };
     rank as usize
   }
 
   pub fn send<T: MpiData>(&self, buf: &[T], dst: usize) {
-    unsafe { MPI_Send(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), dst as c_int, 0, MPI_COMM_WORLD) };
+    unsafe { MPI_Send(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), dst as c_int, 0, MPI_Comm::WORLD()) };
   }
 
   pub fn recv<T: MpiData>(&self, buf: &mut [T], src: usize) {
     let mut status: MPI_Status = Default::default();
-    unsafe { MPI_Recv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src as c_int, 0, MPI_COMM_WORLD, &mut status as *mut _) };
+    unsafe { MPI_Recv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src as c_int, 0, MPI_Comm::WORLD(), &mut status as *mut _) };
   }
 
   pub fn barrier(&self) {
-    unsafe { MPI_Barrier(MPI_COMM_WORLD) };
+    unsafe { MPI_Barrier(MPI_Comm::WORLD()) };
   }
 
   pub fn broadcast<T: MpiData>(&self, buf: &[T], root: usize) {
-    unsafe { MPI_Bcast(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), root as c_int, MPI_COMM_WORLD) };
+    unsafe { MPI_Bcast(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), root as c_int, MPI_Comm::WORLD()) };
   }
 
   pub fn allreduce<T: MpiData, Op: MpiOp>(&self, sendbuf: &[T], recvbuf: &mut [T], _op: Op) {
     assert_eq!(sendbuf.len(), recvbuf.len());
-    unsafe { MPI_Allreduce(sendbuf.as_ptr() as *const c_void, recvbuf.as_mut_ptr() as *mut c_void, sendbuf.len() as c_int, T::datatype(), Op::op(), MPI_COMM_WORLD) };
+    unsafe { MPI_Allreduce(sendbuf.as_ptr() as *const c_void, recvbuf.as_mut_ptr() as *mut c_void, sendbuf.len() as c_int, T::datatype(), Op::op(), MPI_Comm::WORLD()) };
   }
 }

@@ -149,6 +149,12 @@ pub enum ompi_info_t {}
 #[derive(Clone, Copy)]
 pub struct MPI_Info(pub *mut ompi_info_t);
 
+impl MPI_Info {
+  pub unsafe fn NULL() -> MPI_Info {
+    MPI_Info(transmute(&ompi_mpi_info_null))
+  }
+}
+
 /*#[repr(C)]
 pub struct MPI_Op(c_int);*/
 pub enum ompi_op_t {}
@@ -168,9 +174,14 @@ impl MPI_Op {
   }
 }
 
+pub enum ompi_request_t {}
+#[derive(Clone, Copy)]
+pub struct MPI_Request(pub *mut ompi_request_t);
+
 /*#[repr(C)]
 pub struct MPI_Win(c_int);*/
 pub enum ompi_win_t {}
+#[derive(Clone, Copy)]
 pub struct MPI_Win(pub *mut ompi_win_t);
 
 //pub const MPI_WIN_NULL:     MPI_Win = MPI_Win(0x20000000);
@@ -225,6 +236,9 @@ extern "C" {
   pub fn MPI_Send(buf: *const c_void, count: c_int, datatype: MPI_Datatype, dest: c_int, tag: c_int, comm: MPI_Comm) -> c_int;
   pub fn MPI_Recv(buf: *mut c_void, count: c_int, datatype: MPI_Datatype, source: c_int, tag: c_int, comm: MPI_Comm, status: *mut MPI_Status) -> c_int;
 
+  pub fn MPI_Isend(buf: *const c_void, count: c_int, datatype: MPI_Datatype, dest: c_int, tag: c_int, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
+  pub fn MPI_Irecv(buf: *mut c_void, count: c_int, datatype: MPI_Datatype, source: c_int, tag: c_int, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
+
   pub fn MPI_Barrier(comm: MPI_Comm) -> c_int;
   pub fn MPI_Bcast(buf: *const c_void, count: c_int, datatype: MPI_Datatype, root: c_int, comm: MPI_Comm) -> c_int;
   pub fn MPI_Allreduce(sendbuf: *const c_void, recvbuf: *mut c_void, count: c_int, datatype: MPI_Datatype, op: MPI_Op, comm: MPI_Comm) -> c_int;
@@ -233,6 +247,7 @@ extern "C" {
 
   pub fn MPI_Win_create(base: *mut c_void, size: MPI_Aint, disp_unit: c_int, info: MPI_Info, comm: MPI_Comm, win: *mut MPI_Win) -> c_int;
   pub fn MPI_Win_free(win: *mut MPI_Win) -> c_int;
+  pub fn MPI_Win_fence(assert: c_int, win: MPI_Win) -> c_int;
   pub fn MPI_Win_lock(lock_type: c_int, rank: c_int, assert: c_int, win: MPI_Win) -> c_int;
   pub fn MPI_Win_unlock(rank: c_int, win: MPI_Win) -> c_int;
   pub fn MPI_Get(origin_addr: *mut c_void, origin_count: c_int, origin_datatype: MPI_Datatype, target_rank: c_int, target_disp: MPI_Aint, target_count: c_int, target_datatype: MPI_Datatype, win: MPI_Win) -> c_int;

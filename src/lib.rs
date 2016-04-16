@@ -7,6 +7,7 @@ use ffi::*;
 use libc::{c_void, c_int};
 use std::env;
 use std::ffi::{CString};
+use std::marker::{PhantomData};
 use std::mem::{size_of};
 use std::ptr::{null_mut};
 
@@ -74,6 +75,46 @@ impl Drop for MpiInfo {
   }
 }
 
+pub struct MpiRequest<T> {
+  inner:    MPI_Request,
+  _marker:  PhantomData<T>
+}
+
+impl<T> MpiRequest<T> where T: MpiData {
+  pub fn nonblocking_send(buf: &[T], dst: usize) -> Result<MpiRequest<T>, c_int> {
+    let mut request = MPI_Request(null_mut());
+    let code = unsafe { MPI_Isend(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), dst as c_int, 0, MPI_Comm::WORLD(), &mut request as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiRequest{
+      inner: request,
+      _marker: PhantomData,
+    })
+  }
+
+  pub fn nonblocking_recv(buf: &mut [T], src: usize) -> Result<MpiRequest<T>, c_int> {
+    let mut request = MPI_Request(null_mut());
+    let code = unsafe { MPI_Irecv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src as c_int, 0, MPI_Comm::WORLD(), &mut request as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiRequest{
+      inner: request,
+      _marker: PhantomData,
+    })
+  }
+
+  pub fn blocking_wait(&self) -> Result<(), c_int> {
+    // FIXME(20160415)
+    unimplemented!();
+  }
+}
+
+#[derive(Clone, Copy)]
+pub enum MpiWindowFenceFlag {
+}
+
 pub struct MpiWindow<T> {
   buf_addr: *mut T,
   buf_len:  usize,
@@ -82,12 +123,12 @@ pub struct MpiWindow<T> {
 
 impl<T> MpiWindow<T> {
   pub unsafe fn create(buf_addr: *mut T, buf_len: usize, _mpi: &Mpi) -> Result<MpiWindow<T>, c_int> {
-    let info = match MpiInfo::create(_mpi) {
+    /*let info = match MpiInfo::create(_mpi) {
       Ok(info) => info,
       Err(e) => return Err(e),
-    };
+    };*/
     let mut inner = MPI_Win(null_mut());
-    let code = MPI_Win_create(buf_addr as *mut _, MPI_Aint((size_of::<T>() * buf_len) as isize), 0, info.inner, MPI_Comm::WORLD(), &mut inner as *mut _);
+    let code = MPI_Win_create(buf_addr as *mut _, MPI_Aint((size_of::<T>() * buf_len) as isize), size_of::<T>() as c_int, MPI_Info::NULL(), MPI_Comm::WORLD(), &mut inner as *mut _);
     if code != 0 {
       return Err(code);
     }
@@ -98,16 +139,41 @@ impl<T> MpiWindow<T> {
     })
   }
 
-  pub unsafe fn rma_get(&self, origin_addr: *mut T, origin_len: usize, target_rank: usize, _mpi: &Mpi) -> Result<(), c_int> {
-    // FIXME(20160412)
+  pub fn fence(&self, flag: MpiWindowFenceFlag) -> Result<(), c_int> {
+    // FIXME(20160415): fence flag.
     unimplemented!();
+    let code = unsafe { MPI_Win_fence(0, self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+}
+
+impl<T> MpiWindow<T> where T: MpiData {
+  pub unsafe fn rma_get(&self, origin_addr: *mut T, origin_len: usize, target_rank: usize, _mpi: &Mpi) -> Result<(), c_int> {
+    assert_eq!(origin_len, self.buf_len);
+    let code = MPI_Get(
+        origin_addr as *mut _,
+        origin_len as c_int,
+        T::datatype(),
+        target_rank as c_int,
+        MPI_Aint(0),
+        origin_len as c_int,
+        T::datatype(),
+        self.inner,
+    );
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
   }
 }
 
 impl<T> Drop for MpiWindow<T> {
   fn drop(&mut self) {
     // FIXME(20160412)
-    unimplemented!();
+    //unimplemented!();
   }
 }
 
@@ -117,7 +183,7 @@ impl !Send for Mpi {}
 
 impl Drop for Mpi {
   fn drop(&mut self) {
-    unsafe { MPI_Finalize() };
+    //unsafe { MPI_Finalize() };
   }
 }
 

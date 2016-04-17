@@ -60,6 +60,8 @@ pub enum MPI_Error {
   OutOfResource = -2,
 }
 
+pub const MPI_ANY_SOURCE: c_int = -1;
+
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
 pub struct MPI_Count(pub c_longlong);
@@ -133,6 +135,10 @@ pub const MPI_COMM_SELF:    MPI_Comm = MPI_Comm(0x44000001);*/
 //pub static MPI_COMM_WORLD: *const ompi_communicator_t = &ompi_mpi_comm_world as *const _;
 
 impl MPI_Comm {
+  pub unsafe fn SELF() -> MPI_Comm {
+    MPI_Comm(transmute(&ompi_mpi_comm_self))
+  }
+
   pub unsafe fn WORLD() -> MPI_Comm {
     MPI_Comm(transmute(&ompi_mpi_comm_world))
   }
@@ -141,7 +147,8 @@ impl MPI_Comm {
 /*#[repr(C)]
 pub struct MPI_Group(c_int);*/
 pub enum ompi_group_t {}
-pub struct MPI_Group(*mut ompi_group_t);
+#[derive(Clone, Copy)]
+pub struct MPI_Group(pub *mut ompi_group_t);
 
 //pub const MPI_GROUP_EMPTY:  MPI_Group = MPI_Group(0x48000000);
 
@@ -199,6 +206,7 @@ extern "C" {
   // FIXME(20160412): OpenMPI defines a bunch of `*_predefined_*` versions of
   // types; should we be worried?
   pub static ompi_mpi_comm_world:   ompi_communicator_t;
+  pub static ompi_mpi_comm_self:    ompi_communicator_t;
   pub static ompi_mpi_comm_null:    ompi_communicator_t;
   pub static ompi_mpi_group_empty:  ompi_group_t;
   pub static ompi_mpi_group_null:   ompi_group_t;
@@ -232,23 +240,40 @@ extern "C" {
 
   pub fn MPI_Comm_size(comm: MPI_Comm, size: *mut c_int) -> c_int;
   pub fn MPI_Comm_rank(comm: MPI_Comm, rank: *mut c_int) -> c_int;
+  pub fn MPI_Comm_group(comm: MPI_Comm, group: *mut MPI_Group) -> c_int;
 
   pub fn MPI_Send(buf: *const c_void, count: c_int, datatype: MPI_Datatype, dest: c_int, tag: c_int, comm: MPI_Comm) -> c_int;
   pub fn MPI_Recv(buf: *mut c_void, count: c_int, datatype: MPI_Datatype, source: c_int, tag: c_int, comm: MPI_Comm, status: *mut MPI_Status) -> c_int;
+  pub fn MPI_Sendrecv(
+      sendbuf: *const c_void, sendcount: c_int, sendtype: MPI_Datatype, dest: c_int, sendtag: c_int,
+      recvbuf: *mut c_void, recvcount: c_int, recvtype: MPI_Datatype, source: c_int, recvtag: c_int,
+      comm: MPI_Comm, status: *mut MPI_Status,
+  ) -> c_int;
 
   pub fn MPI_Isend(buf: *const c_void, count: c_int, datatype: MPI_Datatype, dest: c_int, tag: c_int, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
   pub fn MPI_Irecv(buf: *mut c_void, count: c_int, datatype: MPI_Datatype, source: c_int, tag: c_int, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
+  pub fn MPI_Test(request: *mut MPI_Request, flag: *mut c_int, status: *mut MPI_Status) -> c_int;
+  pub fn MPI_Wait(request: *mut MPI_Request, status: *mut MPI_Status) -> c_int;
+  pub fn MPI_Waitall(count: c_int, requests: *mut MPI_Request, statuses: *mut MPI_Status) -> c_int;
 
   pub fn MPI_Barrier(comm: MPI_Comm) -> c_int;
-  pub fn MPI_Bcast(buf: *const c_void, count: c_int, datatype: MPI_Datatype, root: c_int, comm: MPI_Comm) -> c_int;
+  pub fn MPI_Bcast(buf: *mut c_void, count: c_int, datatype: MPI_Datatype, root: c_int, comm: MPI_Comm) -> c_int;
   pub fn MPI_Allreduce(sendbuf: *const c_void, recvbuf: *mut c_void, count: c_int, datatype: MPI_Datatype, op: MPI_Op, comm: MPI_Comm) -> c_int;
 
   pub fn MPI_Info_create(info: *mut MPI_Info) -> c_int;
+
+  pub fn MPI_Group_range_excl(group: MPI_Group, n: c_int, ranges: *mut c_int, newgroup: *mut MPI_Group) -> c_int;
+  pub fn MPI_Group_range_incl(group: MPI_Group, n: c_int, ranges: *mut c_int, newgroup: *mut MPI_Group) -> c_int;
 
   pub fn MPI_Win_create(base: *mut c_void, size: MPI_Aint, disp_unit: c_int, info: MPI_Info, comm: MPI_Comm, win: *mut MPI_Win) -> c_int;
   pub fn MPI_Win_free(win: *mut MPI_Win) -> c_int;
   pub fn MPI_Win_fence(assert: c_int, win: MPI_Win) -> c_int;
   pub fn MPI_Win_lock(lock_type: c_int, rank: c_int, assert: c_int, win: MPI_Win) -> c_int;
   pub fn MPI_Win_unlock(rank: c_int, win: MPI_Win) -> c_int;
+  pub fn MPI_Win_start(group: MPI_Group, assert: c_int, win: MPI_Win) -> c_int;
+  pub fn MPI_Win_complete(win: MPI_Win) -> c_int;
+  pub fn MPI_Win_post(group: MPI_Group, assert: c_int, win: MPI_Win) -> c_int;
+  pub fn MPI_Win_wait(win: MPI_Win) -> c_int;
   pub fn MPI_Get(origin_addr: *mut c_void, origin_count: c_int, origin_datatype: MPI_Datatype, target_rank: c_int, target_disp: MPI_Aint, target_count: c_int, target_datatype: MPI_Datatype, win: MPI_Win) -> c_int;
+  pub fn MPI_Put(origin_addr: *const c_void, origin_count: c_int, origin_datatype: MPI_Datatype, target_rank: c_int, target_disp: MPI_Aint, target_count: c_int, target_datatype: MPI_Datatype, win: MPI_Win) -> c_int;
 }

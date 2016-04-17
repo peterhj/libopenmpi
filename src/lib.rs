@@ -53,6 +53,24 @@ impl MpiOp for MpiSumOp {
   }
 }
 
+pub struct MpiGroup {
+  inner:    MPI_Group,
+}
+
+impl MpiGroup {
+  pub fn ranges(&self, ranges: &[(usize, usize, usize)]) -> MpiGroup {
+    let mut c_ranges: Vec<c_int> = Vec::with_capacity(3 * ranges.len());
+    for i in 0 .. ranges.len() {
+      c_ranges.push(ranges[i].0 as c_int);
+      c_ranges.push((ranges[i].1 - 1) as c_int);
+      c_ranges.push(ranges[i].2 as c_int);
+    }
+    let mut new_inner = MPI_Group(null_mut());
+    unsafe { MPI_Group_range_incl(self.inner, ranges.len() as c_int, c_ranges.as_mut_ptr(), &mut new_inner as *mut _) };
+    MpiGroup{inner: new_inner}
+  }
+}
+
 pub struct MpiInfo {
   inner:    MPI_Info,
 }
@@ -75,6 +93,22 @@ impl Drop for MpiInfo {
   }
 }
 
+pub struct MpiStatus {
+  pub src_rank: usize,
+  pub tag:      c_int,
+  pub error:    c_int,
+}
+
+impl MpiStatus {
+  pub fn new(ffi_status: MPI_Status) -> MpiStatus {
+    MpiStatus{
+      src_rank: ffi_status.source as usize,
+      tag:      ffi_status.tag,
+      error:    ffi_status.error,
+    }
+  }
+}
+
 pub struct MpiRequest<T> {
   inner:    MPI_Request,
   _marker:  PhantomData<T>
@@ -93,9 +127,10 @@ impl<T> MpiRequest<T> where T: MpiData {
     })
   }
 
-  pub fn nonblocking_recv(buf: &mut [T], src: usize) -> Result<MpiRequest<T>, c_int> {
+  pub fn nonblocking_recv(buf: &mut [T], src_or_any: Option<usize>) -> Result<MpiRequest<T>, c_int> {
+    let src_rank = src_or_any.map_or(MPI_ANY_SOURCE, |r| r as c_int);
     let mut request = MPI_Request(null_mut());
-    let code = unsafe { MPI_Irecv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src as c_int, 0, MPI_Comm::WORLD(), &mut request as *mut _) };
+    let code = unsafe { MPI_Irecv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src_rank, 0, MPI_Comm::WORLD(), &mut request as *mut _) };
     if code != 0 {
       return Err(code);
     }
@@ -104,21 +139,65 @@ impl<T> MpiRequest<T> where T: MpiData {
       _marker: PhantomData,
     })
   }
+}
 
-  pub fn blocking_wait(&self) -> Result<(), c_int> {
-    // FIXME(20160415)
+impl<T> MpiRequest<T> {
+  pub fn query(&mut self) -> Result<Option<MpiStatus>, c_int> {
+    // FIXME(20160416)
     unimplemented!();
+  }
+
+  pub fn wait(&mut self) -> Result<MpiStatus, c_int> {
+    let mut status: MPI_Status = Default::default();
+    let code = unsafe { MPI_Wait(&mut self.inner as *mut _, &mut status as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiStatus{
+      src_rank: status.source as usize,
+      tag:      status.tag,
+      error:    status.error,
+    })
+  }
+}
+
+pub struct MpiRequestList<T> {
+  reqs: Vec<MPI_Request>,
+  _marker:  PhantomData,
+}
+
+impl<T> MpiRequestList<T> {
+  pub fn append(&mut self, request: MpiRequest) {
+    self.reqs.push(request.inner);
+  }
+
+  pub fn wait_all(&mut self) -> Result<(), c_int> {
+    let code = unsafe { MPI_Waitall(self.reqs.len() as c_int, &mut self.reqs as *mut _, null_mut()) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
   }
 }
 
 #[derive(Clone, Copy)]
 pub enum MpiWindowFenceFlag {
+  Null,
 }
 
 pub struct MpiWindow<T> {
   buf_addr: *mut T,
   buf_len:  usize,
   inner:    MPI_Win,
+}
+
+impl<T> Drop for MpiWindow<T> {
+  fn drop(&mut self) {
+    // FIXME(20160415): need to do a fence before freeing, otherwise it will
+    // cause a seg fault!
+    unsafe { MPI_Win_fence(0, self.inner) };
+    unsafe { MPI_Win_free(&mut self.inner as *mut _) };
+  }
 }
 
 impl<T> MpiWindow<T> {
@@ -139,10 +218,50 @@ impl<T> MpiWindow<T> {
     })
   }
 
-  pub fn fence(&self, flag: MpiWindowFenceFlag) -> Result<(), c_int> {
-    // FIXME(20160415): fence flag.
-    unimplemented!();
-    let code = unsafe { MPI_Win_fence(0, self.inner) };
+  pub fn fence(&self, /*_flag: MpiWindowFenceFlag*/) -> Result<(), c_int> {
+    // FIXME(20160416): assert code.
+    let mut assert = 0;
+    let code = unsafe { MPI_Win_fence(assert, self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn start(&self, group: &MpiGroup) -> Result<(), c_int> {
+    // FIXME(20160416): assert code.
+    let mut assert = 1; // MPI_MODE_NOCHECK
+    let code = unsafe { MPI_Win_start(group.inner, assert, self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn complete(&self) -> Result<(), c_int> {
+    // FIXME(20160416): assert code.
+    let mut assert = 0;
+    let code = unsafe { MPI_Win_complete(self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn post(&self, group: &MpiGroup) -> Result<(), c_int> {
+    // FIXME(20160416): assert code.
+    let mut assert = 0;
+    let code = unsafe { MPI_Win_post(group.inner, assert, self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn wait(&self) -> Result<(), c_int> {
+    // FIXME(20160416): assert code.
+    let mut assert = 0;
+    let code = unsafe { MPI_Win_wait(self.inner) };
     if code != 0 {
       return Err(code);
     }
@@ -151,14 +270,14 @@ impl<T> MpiWindow<T> {
 }
 
 impl<T> MpiWindow<T> where T: MpiData {
-  pub unsafe fn rma_get(&self, origin_addr: *mut T, origin_len: usize, target_rank: usize, _mpi: &Mpi) -> Result<(), c_int> {
-    assert_eq!(origin_len, self.buf_len);
+  pub unsafe fn rma_get(&self, origin_addr: *mut T, origin_len: usize, target_rank: usize, target_offset: usize, _mpi: &Mpi) -> Result<(), c_int> {
+    assert!(origin_len <= self.buf_len);
     let code = MPI_Get(
         origin_addr as *mut _,
         origin_len as c_int,
         T::datatype(),
         target_rank as c_int,
-        MPI_Aint(0),
+        MPI_Aint(target_offset as isize),
         origin_len as c_int,
         T::datatype(),
         self.inner,
@@ -168,12 +287,23 @@ impl<T> MpiWindow<T> where T: MpiData {
     }
     Ok(())
   }
-}
 
-impl<T> Drop for MpiWindow<T> {
-  fn drop(&mut self) {
-    // FIXME(20160412)
-    //unimplemented!();
+  pub unsafe fn rma_put(&self, origin_addr: *const T, origin_len: usize, target_rank: usize, target_offset: usize, _mpi: &Mpi) -> Result<(), c_int> {
+    assert!(origin_len <= self.buf_len);
+    let code = MPI_Put(
+        origin_addr as *const _,
+        origin_len as c_int,
+        T::datatype(),
+        target_rank as c_int,
+        MPI_Aint(target_offset as isize),
+        origin_len as c_int,
+        T::datatype(),
+        self.inner,
+    );
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
   }
 }
 
@@ -213,6 +343,18 @@ impl Mpi {
     rank as usize
   }
 
+  pub fn self_group(&self) -> MpiGroup {
+    let mut inner = MPI_Group(null_mut());
+    unsafe { MPI_Comm_group(MPI_Comm::SELF(), &mut inner as *mut _) };
+    MpiGroup{inner: inner}
+  }
+
+  pub fn world_group(&self) -> MpiGroup {
+    let mut inner = MPI_Group(null_mut());
+    unsafe { MPI_Comm_group(MPI_Comm::WORLD(), &mut inner as *mut _) };
+    MpiGroup{inner: inner}
+  }
+
   pub fn send<T: MpiData>(&self, buf: &[T], dst: usize) {
     unsafe { MPI_Send(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), dst as c_int, 0, MPI_Comm::WORLD()) };
   }
@@ -222,12 +364,25 @@ impl Mpi {
     unsafe { MPI_Recv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src as c_int, 0, MPI_Comm::WORLD(), &mut status as *mut _) };
   }
 
+  pub fn send_recv<T>(&self, send_buf: &[T], dst: usize, recv_buf: &mut [T], maybe_src: Option<usize>) -> Result<MpiStatus, c_int> where T: MpiData {
+    let mut status: MPI_Status = Default::default();
+    let code = unsafe { MPI_Sendrecv(
+        send_buf.as_ptr() as *const _, send_buf.len() as c_int, T::datatype(), dst as c_int, 0,
+        recv_buf.as_mut_ptr() as *mut _, recv_buf.len() as c_int, T::datatype(), maybe_src.map_or(MPI_ANY_SOURCE, |r| r as c_int), 0,
+        MPI_Comm::WORLD(), &mut status as *mut _,
+    ) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiStatus::new(status))
+  }
+
   pub fn barrier(&self) {
     unsafe { MPI_Barrier(MPI_Comm::WORLD()) };
   }
 
-  pub fn broadcast<T: MpiData>(&self, buf: &[T], root: usize) {
-    unsafe { MPI_Bcast(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), root as c_int, MPI_Comm::WORLD()) };
+  pub fn broadcast<T: MpiData>(&self, buf: &mut [T], root: usize) {
+    unsafe { MPI_Bcast(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), root as c_int, MPI_Comm::WORLD()) };
   }
 
   pub fn allreduce<T: MpiData, Op: MpiOp>(&self, sendbuf: &[T], recvbuf: &mut [T], _op: Op) {

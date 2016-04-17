@@ -167,11 +167,25 @@ pub struct MpiRequestList<T> {
 }
 
 impl<T> MpiRequestList<T> {
+  pub fn new() -> MpiRequestList<T> {
+    MpiRequestList{
+      reqs: vec![],
+      _marker:  PhantomData,
+    }
+  }
+
+  pub fn clear(&mut self) {
+    self.reqs.clear();
+  }
+
   pub fn append(&mut self, request: MpiRequest<T>) {
     self.reqs.push(request.inner);
   }
 
   pub fn wait_all(&mut self) -> Result<(), c_int> {
+    if self.reqs.is_empty() {
+      return Ok(());
+    }
     let code = unsafe { MPI_Waitall(self.reqs.len() as c_int, self.reqs.as_mut_ptr(), null_mut()) };
     if code != 0 {
       return Err(code);
@@ -183,6 +197,12 @@ impl<T> MpiRequestList<T> {
 #[derive(Clone, Copy)]
 pub enum MpiWindowFenceFlag {
   Null,
+}
+
+#[derive(Clone, Copy)]
+pub enum MpiWindowLockMode {
+  Exclusive,
+  Shared,
 }
 
 pub struct MpiWindow<T> {
@@ -222,6 +242,28 @@ impl<T> MpiWindow<T> {
     // FIXME(20160416): assert code.
     let mut assert = 0;
     let code = unsafe { MPI_Win_fence(assert, self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn lock(&self, target_rank: usize, mode: MpiWindowLockMode) -> Result<(), c_int> {
+    let lock_type = match mode {
+      MpiWindowLockMode::Exclusive => MPI_LOCK_EXCLUSIVE,
+      MpiWindowLockMode::Shared => MPI_LOCK_SHARED,
+    };
+    // FIXME(20160416): assert code.
+    let assert = 0;
+    let code = unsafe { MPI_Win_lock(lock_type, target_rank as c_int, assert, self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn unlock(&self, target_rank: usize) -> Result<(), c_int> {
+    let code = unsafe { MPI_Win_unlock(target_rank as c_int, self.inner) };
     if code != 0 {
       return Err(code);
     }
@@ -313,6 +355,7 @@ impl !Send for Mpi {}
 
 impl Drop for Mpi {
   fn drop(&mut self) {
+    // FIXME(20160417)
     //unsafe { MPI_Finalize() };
   }
 }
@@ -327,7 +370,10 @@ impl Mpi {
     }).collect();
     let mut argc = c_args.len() as c_int;
     let mut argv = (&mut c_args).as_mut_ptr();
-    unsafe { MPI_Init(&mut argc as *mut _, &mut argv as *mut _) };
+    //unsafe { MPI_Init(&mut argc as *mut _, &mut argv as *mut _) };
+    let mut provided: c_int = 0;
+    unsafe { MPI_Init_thread(&mut argc as *mut _, &mut argv as *mut _, MPI_THREAD_MULTIPLE, &mut provided as *mut _) };
+    assert_eq!(provided, MPI_THREAD_MULTIPLE);
     Mpi
   }
 
@@ -362,6 +408,25 @@ impl Mpi {
   pub fn recv<T: MpiData>(&self, buf: &mut [T], src: usize) {
     let mut status: MPI_Status = Default::default();
     unsafe { MPI_Recv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src as c_int, 0, MPI_Comm::WORLD(), &mut status as *mut _) };
+  }
+
+  pub fn blocking_send<T>(buf: &[T], dst: usize) -> Result<(), c_int> where T: MpiData {
+    let mut status: MPI_Status = Default::default();
+    let code = unsafe { MPI_Send(buf.as_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), dst as c_int, 0, MPI_Comm::WORLD()) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn blocking_recv<T>(buf: &mut [T], maybe_src: Option<usize>) -> Result<MpiStatus, c_int> where T: MpiData {
+    let src_rank = maybe_src.map_or(MPI_ANY_SOURCE, |r| r as c_int);
+    let mut status: MPI_Status = Default::default();
+    let code = unsafe { MPI_Recv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src_rank, 0, MPI_Comm::WORLD(), &mut status as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiStatus::new(status))
   }
 
   pub fn send_recv<T>(&self, send_buf: &[T], dst: usize, recv_buf: &mut [T], maybe_src: Option<usize>) -> Result<MpiStatus, c_int> where T: MpiData {

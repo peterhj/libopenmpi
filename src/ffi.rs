@@ -60,7 +60,15 @@ pub enum MPI_Error {
   OutOfResource = -2,
 }
 
+pub const MPI_THREAD_SINGLE:      c_int = 0;
+pub const MPI_THREAD_FUNNELED:    c_int = 1;
+pub const MPI_THREAD_SERIALIZED:  c_int = 2;
+pub const MPI_THREAD_MULTIPLE:    c_int = 3;
+
 pub const MPI_ANY_SOURCE: c_int = -1;
+
+pub const MPI_LOCK_EXCLUSIVE: c_int = 1;
+pub const MPI_LOCK_SHARED:    c_int = 2;
 
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
@@ -234,6 +242,7 @@ extern "C" {
   pub static ompi_mpi_info_env:     ompi_info_t;
 
   pub fn MPI_Init(argc: *mut c_int, argv: *mut *mut *mut c_char) -> c_int;
+  pub fn MPI_Init_thread(argc: *mut c_int, argv: *mut *mut *mut c_char, required: c_int, provided: *mut c_int) -> c_int;
   pub fn MPI_Initialized() -> c_int;
   pub fn MPI_Finalize() -> c_int;
   pub fn MPI_Abort(comm: MPI_Comm, errorcode: c_int) -> c_int;

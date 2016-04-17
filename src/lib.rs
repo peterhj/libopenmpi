@@ -163,16 +163,16 @@ impl<T> MpiRequest<T> {
 
 pub struct MpiRequestList<T> {
   reqs: Vec<MPI_Request>,
-  _marker:  PhantomData,
+  _marker:  PhantomData<T>,
 }
 
 impl<T> MpiRequestList<T> {
-  pub fn append(&mut self, request: MpiRequest) {
+  pub fn append(&mut self, request: MpiRequest<T>) {
     self.reqs.push(request.inner);
   }
 
   pub fn wait_all(&mut self) -> Result<(), c_int> {
-    let code = unsafe { MPI_Waitall(self.reqs.len() as c_int, &mut self.reqs as *mut _, null_mut()) };
+    let code = unsafe { MPI_Waitall(self.reqs.len() as c_int, self.reqs.as_mut_ptr(), null_mut()) };
     if code != 0 {
       return Err(code);
     }

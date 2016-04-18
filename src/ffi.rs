@@ -66,9 +66,12 @@ pub const MPI_THREAD_SERIALIZED:  c_int = 2;
 pub const MPI_THREAD_MULTIPLE:    c_int = 3;
 
 pub const MPI_ANY_SOURCE: c_int = -1;
+pub const MPI_ANY_TAG:    c_int = -1;
 
 pub const MPI_LOCK_EXCLUSIVE: c_int = 1;
 pub const MPI_LOCK_SHARED:    c_int = 2;
+
+pub const MPI_MAX_PORT_NAME:  c_int = 1024;
 
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
@@ -143,6 +146,10 @@ pub const MPI_COMM_SELF:    MPI_Comm = MPI_Comm(0x44000001);*/
 //pub static MPI_COMM_WORLD: *const ompi_communicator_t = &ompi_mpi_comm_world as *const _;
 
 impl MPI_Comm {
+  pub unsafe fn NULL() -> MPI_Comm {
+    MPI_Comm(transmute(&ompi_mpi_comm_null))
+  }
+
   pub unsafe fn SELF() -> MPI_Comm {
     MPI_Comm(transmute(&ompi_mpi_comm_self))
   }
@@ -193,6 +200,12 @@ pub enum ompi_request_t {}
 #[derive(Clone, Copy)]
 pub struct MPI_Request(pub *mut ompi_request_t);
 
+impl MPI_Request {
+  pub unsafe fn NULL() -> MPI_Request {
+    MPI_Request(transmute(&ompi_request_null))
+  }
+}
+
 /*#[repr(C)]
 pub struct MPI_Win(c_int);*/
 pub enum ompi_win_t {}
@@ -218,7 +231,6 @@ extern "C" {
   pub static ompi_mpi_comm_null:    ompi_communicator_t;
   pub static ompi_mpi_group_empty:  ompi_group_t;
   pub static ompi_mpi_group_null:   ompi_group_t;
-  //pub static ompi_request_null:     ompi_request_t;
   pub static ompi_mpi_op_null:      ompi_op_t;
   pub static ompi_mpi_op_min:       ompi_op_t;
   pub static ompi_mpi_op_max:       ompi_op_t;
@@ -240,6 +252,7 @@ extern "C" {
   pub static ompi_mpi_win_null:     ompi_win_t;
   pub static ompi_mpi_info_null:    ompi_info_t;
   pub static ompi_mpi_info_env:     ompi_info_t;
+  pub static ompi_request_null:     ompi_request_t;
 
   pub fn MPI_Init(argc: *mut c_int, argv: *mut *mut *mut c_char) -> c_int;
   pub fn MPI_Init_thread(argc: *mut c_int, argv: *mut *mut *mut c_char, required: c_int, provided: *mut c_int) -> c_int;
@@ -269,10 +282,17 @@ extern "C" {
   pub fn MPI_Bcast(buf: *mut c_void, count: c_int, datatype: MPI_Datatype, root: c_int, comm: MPI_Comm) -> c_int;
   pub fn MPI_Allreduce(sendbuf: *const c_void, recvbuf: *mut c_void, count: c_int, datatype: MPI_Datatype, op: MPI_Op, comm: MPI_Comm) -> c_int;
 
-  pub fn MPI_Info_create(info: *mut MPI_Info) -> c_int;
+  pub fn MPI_Open_port(info: MPI_Info, port_name: *mut c_char) -> c_int;
+  pub fn MPI_Publish_name(service_name: *const c_char, info: MPI_Info, port_name: *const c_char) -> c_int;
+  pub fn MPI_Lookup_name(service_name: *const c_char, info: MPI_Info, port_name: *mut c_char) -> c_int;
+  pub fn MPI_Comm_accept(port_name: *const c_char, info: MPI_Info, root: c_int, comm: MPI_Comm, newcomm: *mut MPI_Comm) -> c_int;
+  pub fn MPI_Comm_connect(port_name: *const c_char, info: MPI_Info, root: c_int, comm: MPI_Comm, newcomm: *mut MPI_Comm) -> c_int;
 
   pub fn MPI_Group_range_excl(group: MPI_Group, n: c_int, ranges: *mut c_int, newgroup: *mut MPI_Group) -> c_int;
   pub fn MPI_Group_range_incl(group: MPI_Group, n: c_int, ranges: *mut c_int, newgroup: *mut MPI_Group) -> c_int;
+
+  pub fn MPI_Info_create(info: *mut MPI_Info) -> c_int;
+  pub fn MPI_Info_set(info: MPI_Info, key: *const c_char, value: *const c_char) -> c_int;
 
   pub fn MPI_Win_create(base: *mut c_void, size: MPI_Aint, disp_unit: c_int, info: MPI_Info, comm: MPI_Comm, win: *mut MPI_Win) -> c_int;
   pub fn MPI_Win_free(win: *mut MPI_Win) -> c_int;

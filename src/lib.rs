@@ -4,9 +4,10 @@ extern crate libc;
 
 use ffi::*;
 
-use libc::{c_void, c_int};
+use libc::{c_void, c_char, c_int};
 use std::env;
-use std::ffi::{CString};
+use std::ffi::{CString, CStr};
+use std::iter::{repeat};
 use std::marker::{PhantomData};
 use std::mem::{size_of};
 use std::ptr::{null_mut};
@@ -53,6 +54,30 @@ impl MpiOp for MpiSumOp {
   }
 }
 
+pub struct MpiComm {
+  inner:    MPI_Comm,
+}
+
+impl MpiComm {
+  pub fn accept(&self, port_name: &CStr) -> Result<MpiComm, c_int> {
+    let mut inner = unsafe { MPI_Comm::NULL() };
+    let code = unsafe { MPI_Comm_accept(port_name.as_ptr(), MPI_Info::NULL(), 0, MPI_Comm::SELF(), &mut inner as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiComm{inner: inner})
+  }
+
+  pub fn connect(&self, port_name: &CStr) -> Result<MpiComm, c_int> {
+    let mut inner = unsafe { MPI_Comm::NULL() };
+    let code = unsafe { MPI_Comm_connect(port_name.as_ptr(), MPI_Info::NULL(), 0, MPI_Comm::SELF(), &mut inner as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiComm{inner: inner})
+  }
+}
+
 pub struct MpiGroup {
   inner:    MPI_Group,
 }
@@ -76,9 +101,15 @@ pub struct MpiInfo {
 }
 
 impl MpiInfo {
-  pub unsafe fn create(_mpi: &Mpi) -> Result<MpiInfo, c_int> {
-    let mut inner = MPI_Info(null_mut());
-    let code = MPI_Info_create(&mut inner as *mut _);
+  pub fn null() -> MpiInfo {
+    MpiInfo{
+      inner:    unsafe { MPI_Info::NULL() },
+    }
+  }
+
+  pub fn create(_mpi: &Mpi) -> Result<MpiInfo, c_int> {
+    let mut inner = unsafe { MPI_Info::NULL() };
+    let code = unsafe { MPI_Info_create(&mut inner as *mut _) };
     if code != 0 {
       return Err(code);
     }
@@ -86,12 +117,20 @@ impl MpiInfo {
       inner:    inner,
     })
   }
-}
 
-impl Drop for MpiInfo {
-  fn drop(&mut self) {
+  pub fn set(&self, key: &CStr, value: &CStr) -> Result<(), c_int> {
+    let code = unsafe { MPI_Info_set(self.inner, key.as_ptr(), value.as_ptr()) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
   }
 }
+
+/*impl Drop for MpiInfo {
+  fn drop(&mut self) {
+  }
+}*/
 
 pub struct MpiStatus {
   pub src_rank: usize,
@@ -115,9 +154,10 @@ pub struct MpiRequest<T> {
 }
 
 impl<T> MpiRequest<T> where T: MpiData {
-  pub fn nonblocking_send(buf: &[T], dst: usize) -> Result<MpiRequest<T>, c_int> {
-    let mut request = MPI_Request(null_mut());
-    let code = unsafe { MPI_Isend(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), dst as c_int, 0, MPI_Comm::WORLD(), &mut request as *mut _) };
+  pub fn nonblocking_send(buf: &[T], dst: usize, tag_or_any: Option<i32>) -> Result<MpiRequest<T>, c_int> {
+    let mut request = unsafe { MPI_Request::NULL() };
+    let tag = tag_or_any.unwrap_or(MPI_ANY_TAG);
+    let code = unsafe { MPI_Isend(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), dst as c_int, tag, MPI_Comm::WORLD(), &mut request as *mut _) };
     if code != 0 {
       return Err(code);
     }
@@ -127,10 +167,11 @@ impl<T> MpiRequest<T> where T: MpiData {
     })
   }
 
-  pub fn nonblocking_recv(buf: &mut [T], src_or_any: Option<usize>) -> Result<MpiRequest<T>, c_int> {
+  pub fn nonblocking_recv(buf: &mut [T], src_or_any: Option<usize>, tag_or_any: Option<i32>) -> Result<MpiRequest<T>, c_int> {
     let src_rank = src_or_any.map_or(MPI_ANY_SOURCE, |r| r as c_int);
-    let mut request = MPI_Request(null_mut());
-    let code = unsafe { MPI_Irecv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src_rank, 0, MPI_Comm::WORLD(), &mut request as *mut _) };
+    let tag = tag_or_any.unwrap_or(MPI_ANY_TAG);
+    let mut request = unsafe { MPI_Request::NULL() };
+    let code = unsafe { MPI_Irecv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src_rank, tag, MPI_Comm::WORLD(), &mut request as *mut _) };
     if code != 0 {
       return Err(code);
     }
@@ -389,6 +430,80 @@ impl Mpi {
     rank as usize
   }
 
+  pub fn blocking_send<T>(buf: &[T], dst: usize) -> Result<(), c_int> where T: MpiData {
+    let mut status: MPI_Status = Default::default();
+    let code = unsafe { MPI_Send(buf.as_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), dst as c_int, 0, MPI_Comm::WORLD()) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn blocking_recv<T>(buf: &mut [T], maybe_src: Option<usize>) -> Result<MpiStatus, c_int> where T: MpiData {
+    let src_rank = maybe_src.map_or(MPI_ANY_SOURCE, |r| r as c_int);
+    let mut status: MPI_Status = Default::default();
+    let code = unsafe { MPI_Recv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src_rank, 0, MPI_Comm::WORLD(), &mut status as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiStatus::new(status))
+  }
+
+  pub fn open_port(&self) -> Result<CString, c_int> {
+    let mut port_buf: Vec<u8> = repeat(0).take(MPI_MAX_PORT_NAME as usize + 1).collect();
+    let code = unsafe { MPI_Open_port(MPI_Info::NULL(), port_buf.as_mut_ptr() as *mut c_char) };
+    if code != 0 {
+      return Err(code);
+    }
+    match CString::new(port_buf) {
+      Ok(cstr) => Ok(cstr),
+      Err(e) => panic!("failed to turn port into CString: {:?}", e),
+    }
+  }
+
+  pub fn publish_service(&self, service_name: &CStr, global: bool, unique: bool, port: &CStr) -> Result<(), c_int> {
+    let global_key_buf = b"ompi_global_scope".to_vec();
+    let global_value_buf = match global {
+      false => b"false".to_vec(),
+      true  => b"true".to_vec(),
+    };
+    let unique_key_buf = b"ompi_unique".to_vec();
+    let unique_value_buf = match unique {
+      false => b"false".to_vec(),
+      true  => b"true".to_vec(),
+    };
+    let global_key = CString::new(global_key_buf).unwrap();
+    let global_value = CString::new(global_value_buf).unwrap();
+    let unique_key = CString::new(unique_key_buf).unwrap();
+    let unique_value = CString::new(unique_value_buf).unwrap();
+    let info = MpiInfo::create(self).unwrap();
+    info.set(&global_key, &global_value).unwrap();
+    info.set(&unique_key, &unique_value).unwrap();
+    let code = unsafe { MPI_Publish_name(service_name.as_ptr(), info.inner, port.as_ptr()) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn lookup_service(&self, service_name: &CStr) -> Result<CString, c_int> {
+    let order_key_buf = b"ompi_lookup_order".to_vec();
+    let order_value_buf = b"local".to_vec();
+    let order_key = CString::new(order_key_buf).unwrap();
+    let order_value = CString::new(order_value_buf).unwrap();
+    let info = MpiInfo::create(self).unwrap();
+    info.set(&order_key, &order_value).unwrap();
+    let mut port_buf: Vec<u8> = repeat(0).take(MPI_MAX_PORT_NAME as usize + 1).collect();
+    let code = unsafe { MPI_Lookup_name(service_name.as_ptr(), info.inner, port_buf.as_mut_ptr() as *mut c_char) };
+    if code != 0 {
+      return Err(code);
+    }
+    match CString::new(port_buf) {
+      Ok(cstr) => Ok(cstr),
+      Err(e) => panic!("failed to turn port into CString: {:?}", e),
+    }
+  }
+
   pub fn self_group(&self) -> MpiGroup {
     let mut inner = MPI_Group(null_mut());
     unsafe { MPI_Comm_group(MPI_Comm::SELF(), &mut inner as *mut _) };
@@ -408,25 +523,6 @@ impl Mpi {
   pub fn recv<T: MpiData>(&self, buf: &mut [T], src: usize) {
     let mut status: MPI_Status = Default::default();
     unsafe { MPI_Recv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src as c_int, 0, MPI_Comm::WORLD(), &mut status as *mut _) };
-  }
-
-  pub fn blocking_send<T>(buf: &[T], dst: usize) -> Result<(), c_int> where T: MpiData {
-    let mut status: MPI_Status = Default::default();
-    let code = unsafe { MPI_Send(buf.as_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), dst as c_int, 0, MPI_Comm::WORLD()) };
-    if code != 0 {
-      return Err(code);
-    }
-    Ok(())
-  }
-
-  pub fn blocking_recv<T>(buf: &mut [T], maybe_src: Option<usize>) -> Result<MpiStatus, c_int> where T: MpiData {
-    let src_rank = maybe_src.map_or(MPI_ANY_SOURCE, |r| r as c_int);
-    let mut status: MPI_Status = Default::default();
-    let code = unsafe { MPI_Recv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src_rank, 0, MPI_Comm::WORLD(), &mut status as *mut _) };
-    if code != 0 {
-      return Err(code);
-    }
-    Ok(MpiStatus::new(status))
   }
 
   pub fn send_recv<T>(&self, send_buf: &[T], dst: usize, recv_buf: &mut [T], maybe_src: Option<usize>) -> Result<MpiStatus, c_int> where T: MpiData {

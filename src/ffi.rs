@@ -138,7 +138,9 @@ impl MPI_Datatype {
 #[repr(C)]
 pub struct MPI_Comm(c_int);*/
 pub enum ompi_communicator_t {}
+#[derive(Clone, Copy)]
 pub struct MPI_Comm(*mut ompi_communicator_t);
+unsafe impl Send for MPI_Comm {}
 
 /*pub const MPI_COMM_WORLD:   MPI_Comm = MPI_Comm(0x44000000);
 pub const MPI_COMM_SELF:    MPI_Comm = MPI_Comm(0x44000001);*/
@@ -265,6 +267,7 @@ extern "C" {
   pub fn MPI_Comm_group(comm: MPI_Comm, group: *mut MPI_Group) -> c_int;
 
   pub fn MPI_Send(buf: *const c_void, count: c_int, datatype: MPI_Datatype, dest: c_int, tag: c_int, comm: MPI_Comm) -> c_int;
+  pub fn MPI_Probe(source: c_int, tag: c_int, comm: MPI_Comm, status: *mut MPI_Status) -> c_int;
   pub fn MPI_Recv(buf: *mut c_void, count: c_int, datatype: MPI_Datatype, source: c_int, tag: c_int, comm: MPI_Comm, status: *mut MPI_Status) -> c_int;
   pub fn MPI_Sendrecv(
       sendbuf: *const c_void, sendcount: c_int, sendtype: MPI_Datatype, dest: c_int, sendtag: c_int,
@@ -273,6 +276,8 @@ extern "C" {
   ) -> c_int;
 
   pub fn MPI_Isend(buf: *const c_void, count: c_int, datatype: MPI_Datatype, dest: c_int, tag: c_int, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
+  pub fn MPI_Issend(buf: *const c_void, count: c_int, datatype: MPI_Datatype, dest: c_int, tag: c_int, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
+  pub fn MPI_Iprobe(source: c_int, tag: c_int, comm: MPI_Comm, flag: *mut c_int, status: *mut MPI_Status) -> c_int;
   pub fn MPI_Irecv(buf: *mut c_void, count: c_int, datatype: MPI_Datatype, source: c_int, tag: c_int, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
   pub fn MPI_Test(request: *mut MPI_Request, flag: *mut c_int, status: *mut MPI_Status) -> c_int;
   pub fn MPI_Wait(request: *mut MPI_Request, status: *mut MPI_Status) -> c_int;

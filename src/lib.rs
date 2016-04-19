@@ -56,25 +56,96 @@ impl MpiOp for MpiSumOp {
 
 pub struct MpiComm {
   inner:    MPI_Comm,
+  predef:   bool,
+}
+
+impl Drop for MpiComm {
+  fn drop(&mut self) {
+    if !self.predef {
+      // FIXME(20160419)
+      //unsafe { MPI_Comm_disconnect(&mut self.inner as *mut _) };
+    }
+  }
 }
 
 impl MpiComm {
-  pub fn accept(&self, port_name: &CStr) -> Result<MpiComm, c_int> {
+  pub fn accept(port_name: &CStr) -> Result<MpiComm, c_int> {
     let mut inner = unsafe { MPI_Comm::NULL() };
     let code = unsafe { MPI_Comm_accept(port_name.as_ptr(), MPI_Info::NULL(), 0, MPI_Comm::SELF(), &mut inner as *mut _) };
     if code != 0 {
       return Err(code);
     }
-    Ok(MpiComm{inner: inner})
+    Ok(MpiComm{
+      inner:  inner,
+      predef: false,
+    })
   }
 
-  pub fn connect(&self, port_name: &CStr) -> Result<MpiComm, c_int> {
+  pub fn connect(port_name: &CStr) -> Result<MpiComm, c_int> {
     let mut inner = unsafe { MPI_Comm::NULL() };
     let code = unsafe { MPI_Comm_connect(port_name.as_ptr(), MPI_Info::NULL(), 0, MPI_Comm::SELF(), &mut inner as *mut _) };
     if code != 0 {
       return Err(code);
     }
-    Ok(MpiComm{inner: inner})
+    //Ok(MpiComm{inner: inner})
+    Ok(MpiComm{
+      inner:  inner,
+      predef: false,
+    })
+  }
+
+  pub fn nonblocking_send<T>(&mut self, buf: &[T], dst: usize, tag: i32) -> Result<MpiRequest, c_int> where T: MpiData {
+    let mut request = unsafe { MPI_Request::NULL() };
+    let code = unsafe { MPI_Isend(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), dst as c_int, tag, self.inner, &mut request as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiRequest{
+      inner: request,
+      //_marker: PhantomData,
+    })
+  }
+
+  pub fn nonblocking_sync_send<T>(&mut self, buf: &[T], dst: usize, tag: i32) -> Result<MpiRequest, c_int> where T: MpiData {
+    let mut request = unsafe { MPI_Request::NULL() };
+    let code = unsafe { MPI_Issend(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), dst as c_int, tag, self.inner, &mut request as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiRequest{
+      inner: request,
+      //_marker: PhantomData,
+    })
+  }
+
+  pub fn nonblocking_probe(&mut self, src_or_any: Option<usize>, tag_or_any: Option<i32>) -> Result<Option<MpiStatus>, c_int> {
+    let src_rank = src_or_any.map_or(MPI_ANY_SOURCE, |r| r as c_int);
+    let tag = tag_or_any.unwrap_or(MPI_ANY_TAG);
+    let mut flag = 0;
+    let mut status: MPI_Status = Default::default();
+    let code = unsafe { MPI_Iprobe(src_rank, tag, self.inner, &mut flag as *mut _, &mut status as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    match flag {
+      0 => Ok(None),
+      1 => Ok(Some(MpiStatus::new(status))),
+      _ => unreachable!(),
+    }
+  }
+
+  pub fn nonblocking_recv<T>(&mut self, buf: &mut [T], src_or_any: Option<usize>, tag_or_any: Option<i32>) -> Result<MpiRequest, c_int> where T: MpiData {
+    let src_rank = src_or_any.map_or(MPI_ANY_SOURCE, |r| r as c_int);
+    let tag = tag_or_any.unwrap_or(MPI_ANY_TAG);
+    let mut request = unsafe { MPI_Request::NULL() };
+    let code = unsafe { MPI_Irecv(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), src_rank, tag, self.inner, &mut request as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiRequest{
+      inner: request,
+      //_marker: PhantomData,
+    })
   }
 }
 
@@ -107,7 +178,7 @@ impl MpiInfo {
     }
   }
 
-  pub fn create(_mpi: &Mpi) -> Result<MpiInfo, c_int> {
+  pub fn create(/*_mpi: &Mpi*/) -> Result<MpiInfo, c_int> {
     let mut inner = unsafe { MPI_Info::NULL() };
     let code = unsafe { MPI_Info_create(&mut inner as *mut _) };
     if code != 0 {
@@ -118,7 +189,7 @@ impl MpiInfo {
     })
   }
 
-  pub fn set(&self, key: &CStr, value: &CStr) -> Result<(), c_int> {
+  pub fn set(&mut self, key: &CStr, value: &CStr) -> Result<(), c_int> {
     let code = unsafe { MPI_Info_set(self.inner, key.as_ptr(), value.as_ptr()) };
     if code != 0 {
       return Err(code);
@@ -148,26 +219,39 @@ impl MpiStatus {
   }
 }
 
-pub struct MpiRequest<T> {
+pub struct MpiRequest {
   inner:    MPI_Request,
-  _marker:  PhantomData<T>
+  //_marker:  PhantomData<T>
 }
 
-impl<T> MpiRequest<T> where T: MpiData {
-  pub fn nonblocking_send(buf: &[T], dst: usize, tag_or_any: Option<i32>) -> Result<MpiRequest<T>, c_int> {
-    let mut request = unsafe { MPI_Request::NULL() };
+impl MpiRequest {
+  pub fn nonblocking_send<T>(buf: &[T], dst: usize, tag_or_any: Option<i32>) -> Result<MpiRequest, c_int> where T: MpiData {
     let tag = tag_or_any.unwrap_or(MPI_ANY_TAG);
+    let mut request = unsafe { MPI_Request::NULL() };
     let code = unsafe { MPI_Isend(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), dst as c_int, tag, MPI_Comm::WORLD(), &mut request as *mut _) };
     if code != 0 {
       return Err(code);
     }
     Ok(MpiRequest{
       inner: request,
-      _marker: PhantomData,
+      //_marker: PhantomData,
     })
   }
 
-  pub fn nonblocking_recv(buf: &mut [T], src_or_any: Option<usize>, tag_or_any: Option<i32>) -> Result<MpiRequest<T>, c_int> {
+  pub fn nonblocking_sync_send<T>(buf: &[T], dst: usize, tag_or_any: Option<i32>) -> Result<MpiRequest, c_int> where T: MpiData {
+    let tag = tag_or_any.unwrap_or(MPI_ANY_TAG);
+    let mut request = unsafe { MPI_Request::NULL() };
+    let code = unsafe { MPI_Issend(buf.as_ptr() as *const c_void, buf.len() as c_int, T::datatype(), dst as c_int, tag, MPI_Comm::WORLD(), &mut request as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiRequest{
+      inner: request,
+      //_marker: PhantomData,
+    })
+  }
+
+  pub fn nonblocking_recv<T>(buf: &mut [T], src_or_any: Option<usize>, tag_or_any: Option<i32>) -> Result<MpiRequest, c_int> where T: MpiData {
     let src_rank = src_or_any.map_or(MPI_ANY_SOURCE, |r| r as c_int);
     let tag = tag_or_any.unwrap_or(MPI_ANY_TAG);
     let mut request = unsafe { MPI_Request::NULL() };
@@ -177,12 +261,12 @@ impl<T> MpiRequest<T> where T: MpiData {
     }
     Ok(MpiRequest{
       inner: request,
-      _marker: PhantomData,
+      //_marker: PhantomData,
     })
   }
 }
 
-impl<T> MpiRequest<T> {
+impl MpiRequest {
   pub fn query(&mut self) -> Result<Option<MpiStatus>, c_int> {
     // FIXME(20160416)
     unimplemented!();
@@ -202,16 +286,16 @@ impl<T> MpiRequest<T> {
   }
 }
 
-pub struct MpiRequestList<T> {
+pub struct MpiRequestList {
   reqs: Vec<MPI_Request>,
-  _marker:  PhantomData<T>,
+  //_marker:  PhantomData<T>,
 }
 
-impl<T> MpiRequestList<T> {
-  pub fn new() -> MpiRequestList<T> {
+impl MpiRequestList {
+  pub fn new() -> MpiRequestList {
     MpiRequestList{
       reqs: vec![],
-      _marker:  PhantomData,
+      //_marker:  PhantomData,
     }
   }
 
@@ -219,7 +303,7 @@ impl<T> MpiRequestList<T> {
     self.reqs.clear();
   }
 
-  pub fn append(&mut self, request: MpiRequest<T>) {
+  pub fn append(&mut self, request: MpiRequest) {
     self.reqs.push(request.inner);
   }
 
@@ -231,6 +315,7 @@ impl<T> MpiRequestList<T> {
     if code != 0 {
       return Err(code);
     }
+    self.reqs.clear();
     Ok(())
   }
 }
@@ -449,19 +534,27 @@ impl Mpi {
     Ok(MpiStatus::new(status))
   }
 
-  pub fn open_port(&self) -> Result<CString, c_int> {
+  pub fn open_port_() -> Result<CString, c_int> {
     let mut port_buf: Vec<u8> = repeat(0).take(MPI_MAX_PORT_NAME as usize + 1).collect();
     let code = unsafe { MPI_Open_port(MPI_Info::NULL(), port_buf.as_mut_ptr() as *mut c_char) };
     if code != 0 {
       return Err(code);
     }
+    let mut buf_len = 0;
+    for i in 0 .. port_buf.len() {
+      if port_buf[i] == 0 {
+        buf_len = i;
+        break;
+      }
+    }
+    unsafe { port_buf.set_len(buf_len) };
     match CString::new(port_buf) {
       Ok(cstr) => Ok(cstr),
       Err(e) => panic!("failed to turn port into CString: {:?}", e),
     }
   }
 
-  pub fn publish_service(&self, service_name: &CStr, global: bool, unique: bool, port: &CStr) -> Result<(), c_int> {
+  pub fn publish_service_(service_name: &CStr, global: bool, unique: bool, port: &CStr) -> Result<(), c_int> {
     let global_key_buf = b"ompi_global_scope".to_vec();
     let global_value_buf = match global {
       false => b"false".to_vec(),
@@ -476,7 +569,7 @@ impl Mpi {
     let global_value = CString::new(global_value_buf).unwrap();
     let unique_key = CString::new(unique_key_buf).unwrap();
     let unique_value = CString::new(unique_value_buf).unwrap();
-    let info = MpiInfo::create(self).unwrap();
+    let mut info = MpiInfo::create().unwrap();
     info.set(&global_key, &global_value).unwrap();
     info.set(&unique_key, &unique_value).unwrap();
     let code = unsafe { MPI_Publish_name(service_name.as_ptr(), info.inner, port.as_ptr()) };
@@ -486,22 +579,38 @@ impl Mpi {
     Ok(())
   }
 
-  pub fn lookup_service(&self, service_name: &CStr) -> Result<CString, c_int> {
+  pub fn lookup_service_(service_name: &CStr) -> Result<CString, c_int> {
     let order_key_buf = b"ompi_lookup_order".to_vec();
     let order_value_buf = b"local".to_vec();
     let order_key = CString::new(order_key_buf).unwrap();
     let order_value = CString::new(order_value_buf).unwrap();
-    let info = MpiInfo::create(self).unwrap();
+    let mut info = MpiInfo::create().unwrap();
     info.set(&order_key, &order_value).unwrap();
     let mut port_buf: Vec<u8> = repeat(0).take(MPI_MAX_PORT_NAME as usize + 1).collect();
     let code = unsafe { MPI_Lookup_name(service_name.as_ptr(), info.inner, port_buf.as_mut_ptr() as *mut c_char) };
     if code != 0 {
       return Err(code);
     }
+    let mut buf_len = 0;
+    for i in 0 .. port_buf.len() {
+      if port_buf[i] == 0 {
+        buf_len = i;
+        break;
+      }
+    }
+    unsafe { port_buf.set_len(buf_len) };
     match CString::new(port_buf) {
       Ok(cstr) => Ok(cstr),
       Err(e) => panic!("failed to turn port into CString: {:?}", e),
     }
+  }
+
+  pub fn barrier_() -> Result<(), c_int> {
+    let code = unsafe { MPI_Barrier(MPI_Comm::WORLD()) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
   }
 
   pub fn self_group(&self) -> MpiGroup {

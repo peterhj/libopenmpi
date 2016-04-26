@@ -534,6 +534,17 @@ impl Mpi {
     Ok(MpiStatus::new(status))
   }
 
+  pub fn nonblocking_allreduce_<T, Op>(src_buf: &[T], dst_buf: &mut [T], _op: Op) -> Result<MpiRequest, c_int>
+  where T: MpiData, Op: MpiOp {
+    assert_eq!(src_buf.len(), dst_buf.len());
+    let mut req = unsafe { MPI_Request::NULL() };
+    let code = unsafe { MPI_Iallreduce(src_buf.as_ptr() as *const c_void, dst_buf.as_mut_ptr() as *mut c_void, src_buf.len() as c_int, T::datatype(), Op::op(), MPI_Comm::WORLD(), &mut req) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiRequest{inner: req})
+  }
+
   pub fn open_port_() -> Result<CString, c_int> {
     let mut port_buf: Vec<u8> = repeat(0).take(MPI_MAX_PORT_NAME as usize + 1).collect();
     let code = unsafe { MPI_Open_port(MPI_Info::NULL(), port_buf.as_mut_ptr() as *mut c_char) };
@@ -607,6 +618,23 @@ impl Mpi {
 
   pub fn barrier_() -> Result<(), c_int> {
     let code = unsafe { MPI_Barrier(MPI_Comm::WORLD()) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn broadcast_<T: MpiData>(buf: &mut [T], root: usize) -> Result<(), c_int> {
+    let code = unsafe { MPI_Bcast(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), root as c_int, MPI_Comm::WORLD()) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn allreduce_<T: MpiData, Op: MpiOp>(sendbuf: &[T], recvbuf: &mut [T], _op: Op) -> Result<(), c_int> {
+    assert_eq!(sendbuf.len(), recvbuf.len());
+    let code = unsafe { MPI_Allreduce(sendbuf.as_ptr() as *const c_void, recvbuf.as_mut_ptr() as *mut c_void, sendbuf.len() as c_int, T::datatype(), Op::op(), MPI_Comm::WORLD()) };
     if code != 0 {
       return Err(code);
     }

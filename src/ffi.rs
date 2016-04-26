@@ -287,6 +287,8 @@ extern "C" {
   pub fn MPI_Bcast(buf: *mut c_void, count: c_int, datatype: MPI_Datatype, root: c_int, comm: MPI_Comm) -> c_int;
   pub fn MPI_Allreduce(sendbuf: *const c_void, recvbuf: *mut c_void, count: c_int, datatype: MPI_Datatype, op: MPI_Op, comm: MPI_Comm) -> c_int;
 
+  pub fn MPI_Iallreduce(sendbuf: *const c_void, recvbuf: *mut c_void, count: c_int, datatype: MPI_Datatype, op: MPI_Op, comm: MPI_Comm, request: &mut MPI_Request) -> c_int;
+
   pub fn MPI_Open_port(info: MPI_Info, port_name: *mut c_char) -> c_int;
   pub fn MPI_Publish_name(service_name: *const c_char, info: MPI_Info, port_name: *const c_char) -> c_int;
   pub fn MPI_Lookup_name(service_name: *const c_char, info: MPI_Info, port_name: *mut c_char) -> c_int;

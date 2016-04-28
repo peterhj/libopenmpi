@@ -117,6 +117,10 @@ pub static MPI_FLOAT:   *const ompi_datatype_t = &ompi_mpi_float as *const _;
 pub static MPI_DOUBLE:  *const ompi_datatype_t = &ompi_mpi_double as *const _;*/
 
 impl MPI_Datatype {
+  pub unsafe fn UNSIGNED_CHAR() -> MPI_Datatype {
+    MPI_Datatype(transmute(&ompi_mpi_unsigned_char))
+  }
+
   pub unsafe fn BYTE() -> MPI_Datatype {
     MPI_Datatype(transmute(&ompi_mpi_byte))
   }
@@ -169,6 +173,16 @@ pub struct MPI_Group(pub *mut ompi_group_t);
 
 //pub const MPI_GROUP_EMPTY:  MPI_Group = MPI_Group(0x48000000);
 
+impl MPI_Group {
+  pub unsafe fn NULL() -> MPI_Group {
+    MPI_Group(transmute(&ompi_mpi_group_null))
+  }
+
+  pub unsafe fn EMPTY() -> MPI_Group {
+    MPI_Group(transmute(&ompi_mpi_group_empty))
+  }
+}
+
 pub enum ompi_info_t {}
 #[derive(Clone, Copy)]
 pub struct MPI_Info(pub *mut ompi_info_t);
@@ -215,6 +229,12 @@ pub enum ompi_win_t {}
 pub struct MPI_Win(pub *mut ompi_win_t);
 
 //pub const MPI_WIN_NULL:     MPI_Win = MPI_Win(0x20000000);
+
+impl MPI_Win {
+  pub unsafe fn NULL() -> MPI_Win {
+    MPI_Win(transmute(&ompi_mpi_win_null))
+  }
+}
 
 #[link(name = "dl")]
 extern "C" {

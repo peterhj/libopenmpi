@@ -14,6 +14,8 @@ use std::ptr::{null_mut};
 
 pub mod ffi;
 
+type AintTy = isize;
+
 pub trait MpiData {
   fn datatype() -> MPI_Datatype;
 }
@@ -161,7 +163,7 @@ impl MpiGroup {
       c_ranges.push((ranges[i].1 - 1) as c_int);
       c_ranges.push(ranges[i].2 as c_int);
     }
-    let mut new_inner = MPI_Group(null_mut());
+    let mut new_inner = unsafe { MPI_Group::NULL() };
     unsafe { MPI_Group_range_incl(self.inner, ranges.len() as c_int, c_ranges.as_mut_ptr(), &mut new_inner as *mut _) };
     MpiGroup{inner: new_inner}
   }
@@ -352,8 +354,8 @@ impl<T> MpiWindow<T> {
       Ok(info) => info,
       Err(e) => return Err(e),
     };*/
-    let mut inner = MPI_Win(null_mut());
-    let code = MPI_Win_create(buf_addr as *mut _, MPI_Aint((size_of::<T>() * buf_len) as isize), size_of::<T>() as c_int, MPI_Info::NULL(), MPI_Comm::WORLD(), &mut inner as *mut _);
+    let mut inner = MPI_Win::NULL();
+    let code = MPI_Win_create(buf_addr as *mut _, MPI_Aint((size_of::<T>() * buf_len) as AintTy), size_of::<T>() as c_int, MPI_Info::NULL(), MPI_Comm::WORLD(), &mut inner as *mut _);
     if code != 0 {
       return Err(code);
     }
@@ -445,7 +447,7 @@ impl<T> MpiWindow<T> where T: MpiData {
         origin_len as c_int,
         T::datatype(),
         target_rank as c_int,
-        MPI_Aint(target_offset as isize),
+        MPI_Aint(target_offset as AintTy),
         origin_len as c_int,
         T::datatype(),
         self.inner,
@@ -463,7 +465,7 @@ impl<T> MpiWindow<T> where T: MpiData {
         origin_len as c_int,
         T::datatype(),
         target_rank as c_int,
-        MPI_Aint(target_offset as isize),
+        MPI_Aint(target_offset as AintTy),
         origin_len as c_int,
         T::datatype(),
         self.inner,
@@ -642,13 +644,13 @@ impl Mpi {
   }
 
   pub fn self_group(&self) -> MpiGroup {
-    let mut inner = MPI_Group(null_mut());
+    let mut inner = unsafe { MPI_Group::NULL() };
     unsafe { MPI_Comm_group(MPI_Comm::SELF(), &mut inner as *mut _) };
     MpiGroup{inner: inner}
   }
 
   pub fn world_group(&self) -> MpiGroup {
-    let mut inner = MPI_Group(null_mut());
+    let mut inner = unsafe { MPI_Group::NULL() };
     unsafe { MPI_Comm_group(MPI_Comm::WORLD(), &mut inner as *mut _) };
     MpiGroup{inner: inner}
   }

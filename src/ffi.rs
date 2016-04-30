@@ -152,16 +152,16 @@ pub const MPI_COMM_SELF:    MPI_Comm = MPI_Comm(0x44000001);*/
 //pub static MPI_COMM_WORLD: *const ompi_communicator_t = &ompi_mpi_comm_world as *const _;
 
 impl MPI_Comm {
-  pub unsafe fn NULL() -> MPI_Comm {
-    MPI_Comm(transmute(&ompi_mpi_comm_null))
+  pub fn NULL() -> MPI_Comm {
+    unsafe { MPI_Comm(transmute(&ompi_mpi_comm_null)) }
   }
 
-  pub unsafe fn SELF() -> MPI_Comm {
-    MPI_Comm(transmute(&ompi_mpi_comm_self))
+  pub fn SELF() -> MPI_Comm {
+    unsafe { MPI_Comm(transmute(&ompi_mpi_comm_self)) }
   }
 
-  pub unsafe fn WORLD() -> MPI_Comm {
-    MPI_Comm(transmute(&ompi_mpi_comm_world))
+  pub fn WORLD() -> MPI_Comm {
+    unsafe { MPI_Comm(transmute(&ompi_mpi_comm_world)) }
   }
 }
 
@@ -307,7 +307,8 @@ extern "C" {
   pub fn MPI_Bcast(buf: *mut c_void, count: c_int, datatype: MPI_Datatype, root: c_int, comm: MPI_Comm) -> c_int;
   pub fn MPI_Allreduce(sendbuf: *const c_void, recvbuf: *mut c_void, count: c_int, datatype: MPI_Datatype, op: MPI_Op, comm: MPI_Comm) -> c_int;
 
-  pub fn MPI_Iallreduce(sendbuf: *const c_void, recvbuf: *mut c_void, count: c_int, datatype: MPI_Datatype, op: MPI_Op, comm: MPI_Comm, request: &mut MPI_Request) -> c_int;
+  pub fn MPI_Ibcast(buf: *const c_void, count: c_int, datatype: MPI_Datatype, root: c_int, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
+  pub fn MPI_Iallreduce(sendbuf: *const c_void, recvbuf: *mut c_void, count: c_int, datatype: MPI_Datatype, op: MPI_Op, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
 
   pub fn MPI_Open_port(info: MPI_Info, port_name: *mut c_char) -> c_int;
   pub fn MPI_Publish_name(service_name: *const c_char, info: MPI_Info, port_name: *const c_char) -> c_int;

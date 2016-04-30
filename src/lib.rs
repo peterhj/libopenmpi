@@ -71,6 +71,20 @@ impl Drop for MpiComm {
 }
 
 impl MpiComm {
+  pub fn self_() -> MpiComm {
+    MpiComm{
+      inner:    MPI_Comm::SELF(),
+      predef:   true,
+    }
+  }
+
+  pub fn world() -> MpiComm {
+    MpiComm{
+      inner:    MPI_Comm::WORLD(),
+      predef:   true,
+    }
+  }
+
   pub fn accept(port_name: &CStr) -> Result<MpiComm, c_int> {
     let mut inner = unsafe { MPI_Comm::NULL() };
     let code = unsafe { MPI_Comm_accept(port_name.as_ptr(), MPI_Info::NULL(), 0, MPI_Comm::SELF(), &mut inner as *mut _) };
@@ -505,6 +519,22 @@ impl Mpi {
     Mpi
   }
 
+  pub fn new_serialized() -> Mpi {
+    let args: Vec<_> = env::args().collect();
+    // FIXME(20160130): this leaks the C string.
+    let mut c_args: Vec<_> = args.into_iter().map(|s| match CString::new(s) {
+      Ok(s) => s.into_raw(),
+      Err(e) => panic!("mpi: failed to initialize: bad argv: {:?}", e),
+    }).collect();
+    let mut argc = c_args.len() as c_int;
+    let mut argv = (&mut c_args).as_mut_ptr();
+    //unsafe { MPI_Init(&mut argc as *mut _, &mut argv as *mut _) };
+    let mut provided: c_int = 0;
+    unsafe { MPI_Init_thread(&mut argc as *mut _, &mut argv as *mut _, MPI_THREAD_SERIALIZED, &mut provided as *mut _) };
+    assert_eq!(provided, MPI_THREAD_SERIALIZED);
+    Mpi
+  }
+
   pub fn size(&self) -> usize {
     let mut size: c_int = 0;
     unsafe { MPI_Comm_size(MPI_Comm::WORLD(), &mut size as *mut _) };
@@ -536,11 +566,21 @@ impl Mpi {
     Ok(MpiStatus::new(status))
   }
 
+  pub fn nonblocking_broadcast_<T>(buf: &mut [T], root: usize) -> Result<MpiRequest, c_int>
+  where T: MpiData {
+    let mut req = unsafe { MPI_Request::NULL() };
+    let code = unsafe { MPI_Ibcast(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), root as i32, MPI_Comm::WORLD(), &mut req as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiRequest{inner: req})
+  }
+
   pub fn nonblocking_allreduce_<T, Op>(src_buf: &[T], dst_buf: &mut [T], _op: Op) -> Result<MpiRequest, c_int>
   where T: MpiData, Op: MpiOp {
     assert_eq!(src_buf.len(), dst_buf.len());
     let mut req = unsafe { MPI_Request::NULL() };
-    let code = unsafe { MPI_Iallreduce(src_buf.as_ptr() as *const c_void, dst_buf.as_mut_ptr() as *mut c_void, src_buf.len() as c_int, T::datatype(), Op::op(), MPI_Comm::WORLD(), &mut req) };
+    let code = unsafe { MPI_Iallreduce(src_buf.as_ptr() as *const c_void, dst_buf.as_mut_ptr() as *mut c_void, src_buf.len() as c_int, T::datatype(), Op::op(), MPI_Comm::WORLD(), &mut req as *mut _) };
     if code != 0 {
       return Err(code);
     }

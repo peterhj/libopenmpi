@@ -347,6 +347,172 @@ pub enum MpiWindowLockMode {
   Shared,
 }
 
+pub struct MpiOwnedWindow<T, Storage> {
+  buf:      Storage,
+  inner:    MPI_Win,
+  _marker:  PhantomData<T>,
+}
+
+impl<T, Storage> Drop for MpiOwnedWindow<T, Storage> {
+  fn drop(&mut self) {
+    // FIXME(20160415): need to do a fence before freeing, otherwise it will
+    // cause a seg fault!
+    unsafe { MPI_Win_fence(0, self.inner) };
+    unsafe { MPI_Win_free(&mut self.inner as *mut _) };
+  }
+}
+
+impl<T, Storage> MpiOwnedWindow<T, Storage> where Storage: AsMut<[T]> {
+  pub unsafe fn create_(mut buf: Storage) -> Result<MpiOwnedWindow<T, Storage>, c_int> {
+    let mut inner = MPI_Win::NULL();
+    {
+      let mut buf = buf.as_mut();
+      let code = MPI_Win_create(buf.as_mut_ptr() as *mut _, MPI_Aint((size_of::<T>() * buf.len()) as AintTy), size_of::<T>() as c_int, MPI_Info::NULL(), MPI_Comm::WORLD(), &mut inner as *mut _);
+      if code != 0 {
+        return Err(code);
+      }
+    }
+    Ok(MpiOwnedWindow{
+      buf:      buf,
+      inner:    inner,
+      _marker:  PhantomData,
+    })
+  }
+
+  pub fn fence(&self, /*_flag: MpiOwnedWindowFenceFlag*/) -> Result<(), c_int> {
+    // FIXME(20160416): assert code.
+    let mut assert = 0;
+    let code = unsafe { MPI_Win_fence(assert, self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn lock(&self, target_rank: usize, mode: MpiWindowLockMode) -> Result<(), c_int> {
+    let lock_type = match mode {
+      MpiWindowLockMode::Exclusive => MPI_LOCK_EXCLUSIVE,
+      MpiWindowLockMode::Shared => MPI_LOCK_SHARED,
+    };
+    // FIXME(20160416): assert code.
+    let assert = 0;
+    let code = unsafe { MPI_Win_lock(lock_type, target_rank as c_int, assert, self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn unlock(&self, target_rank: usize) -> Result<(), c_int> {
+    let code = unsafe { MPI_Win_unlock(target_rank as c_int, self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn start(&self, group: &MpiGroup) -> Result<(), c_int> {
+    // FIXME(20160416): assert code.
+    let mut assert = 1; // MPI_MODE_NOCHECK
+    let code = unsafe { MPI_Win_start(group.inner, assert, self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn complete(&self) -> Result<(), c_int> {
+    // FIXME(20160416): assert code.
+    let mut assert = 0;
+    let code = unsafe { MPI_Win_complete(self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn post(&self, group: &MpiGroup) -> Result<(), c_int> {
+    // FIXME(20160416): assert code.
+    let mut assert = 0;
+    let code = unsafe { MPI_Win_post(group.inner, assert, self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub fn wait(&self) -> Result<(), c_int> {
+    // FIXME(20160416): assert code.
+    let mut assert = 0;
+    let code = unsafe { MPI_Win_wait(self.inner) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+}
+
+impl<T, Storage> MpiOwnedWindow<T, Storage> where T: MpiData, Storage: AsRef<[T]> {
+  pub unsafe fn get_(&self, origin_addr: *mut T, origin_len: usize, target_rank: usize, target_offset: usize) -> Result<(), c_int> {
+    let buf_len = self.buf.as_ref().len();
+    assert!(origin_len <= buf_len);
+    let code = MPI_Get(
+        origin_addr as *mut _,
+        origin_len as c_int,
+        T::datatype(),
+        target_rank as c_int,
+        MPI_Aint(target_offset as AintTy),
+        origin_len as c_int,
+        T::datatype(),
+        self.inner,
+    );
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub unsafe fn put_(&self, origin_addr: *const T, origin_len: usize, target_rank: usize, target_offset: usize) -> Result<(), c_int> {
+    let buf_len = self.buf.as_ref().len();
+    assert!(origin_len <= buf_len);
+    let code = MPI_Put(
+        origin_addr as *const _,
+        origin_len as c_int,
+        T::datatype(),
+        target_rank as c_int,
+        MPI_Aint(target_offset as AintTy),
+        origin_len as c_int,
+        T::datatype(),
+        self.inner,
+    );
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub unsafe fn put_accumulate_<Op>(&self, origin_addr: *const T, origin_len: usize, target_rank: usize, target_offset: usize, _op: Op) -> Result<(), c_int>
+  where Op: MpiOp {
+    let buf_len = self.buf.as_ref().len();
+    assert!(origin_len <= buf_len);
+    let code = MPI_Accumulate(
+        origin_addr as *const _,
+        origin_len as c_int,
+        T::datatype(),
+        target_rank as c_int,
+        MPI_Aint(target_offset as AintTy),
+        origin_len as c_int,
+        T::datatype(),
+        Op::op(),
+        self.inner,
+    );
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+}
+
 pub struct MpiWindow<T> {
   buf_addr: *mut T,
   buf_len:  usize,
@@ -362,7 +528,22 @@ impl<T> Drop for MpiWindow<T> {
   }
 }
 
+unsafe impl<T> Send for MpiWindow<T> {}
+
 impl<T> MpiWindow<T> {
+  pub unsafe fn create_(buf_addr: *mut T, buf_len: usize) -> Result<MpiWindow<T>, c_int> {
+    let mut inner = MPI_Win::NULL();
+    let code = MPI_Win_create(buf_addr as *mut _, MPI_Aint((size_of::<T>() * buf_len) as AintTy), size_of::<T>() as c_int, MPI_Info::NULL(), MPI_Comm::WORLD(), &mut inner as *mut _);
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiWindow{
+      buf_addr: buf_addr,
+      buf_len:  buf_len,
+      inner:    inner,
+    })
+  }
+
   pub unsafe fn create(buf_addr: *mut T, buf_len: usize, _mpi: &Mpi) -> Result<MpiWindow<T>, c_int> {
     /*let info = match MpiInfo::create(_mpi) {
       Ok(info) => info,
@@ -454,6 +635,62 @@ impl<T> MpiWindow<T> {
 }
 
 impl<T> MpiWindow<T> where T: MpiData {
+  pub unsafe fn get_(&self, origin_addr: *mut T, origin_len: usize, target_rank: usize, target_offset: usize) -> Result<(), c_int> {
+    assert!(origin_len <= self.buf_len);
+    let code = MPI_Get(
+        origin_addr as *mut _,
+        origin_len as c_int,
+        T::datatype(),
+        target_rank as c_int,
+        MPI_Aint(target_offset as AintTy),
+        origin_len as c_int,
+        T::datatype(),
+        self.inner,
+    );
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub unsafe fn put_(&self, origin_addr: *const T, origin_len: usize, target_rank: usize, target_offset: usize) -> Result<(), c_int> {
+    assert!(origin_len <= self.buf_len);
+    let code = MPI_Put(
+        origin_addr as *const _,
+        origin_len as c_int,
+        T::datatype(),
+        target_rank as c_int,
+        MPI_Aint(target_offset as AintTy),
+        origin_len as c_int,
+        T::datatype(),
+        self.inner,
+    );
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
+  pub unsafe fn put_accumulate_<Op>(&self, origin_addr: *const T, origin_len: usize, target_rank: usize, target_offset: usize, _op: Op) -> Result<(), c_int>
+  where Op: MpiOp {
+    assert!(origin_len <= self.buf_len);
+    let code = MPI_Accumulate(
+        origin_addr as *const _,
+        origin_len as c_int,
+        T::datatype(),
+        target_rank as c_int,
+        MPI_Aint(target_offset as AintTy),
+        origin_len as c_int,
+        T::datatype(),
+        Op::op(),
+        self.inner,
+    );
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
   pub unsafe fn rma_get(&self, origin_addr: *mut T, origin_len: usize, target_rank: usize, target_offset: usize, _mpi: &Mpi) -> Result<(), c_int> {
     assert!(origin_len <= self.buf_len);
     let code = MPI_Get(

@@ -332,5 +332,7 @@ extern "C" {
   pub fn MPI_Win_post(group: MPI_Group, assert: c_int, win: MPI_Win) -> c_int;
   pub fn MPI_Win_wait(win: MPI_Win) -> c_int;
   pub fn MPI_Get(origin_addr: *mut c_void, origin_count: c_int, origin_datatype: MPI_Datatype, target_rank: c_int, target_disp: MPI_Aint, target_count: c_int, target_datatype: MPI_Datatype, win: MPI_Win) -> c_int;
+  /*pub fn MPI_Get_accumulate(origin_addr: *mut c_void, origin_count: c_int, origin_datatype: MPI_Datatype, target_rank: c_int, target_disp: MPI_Aint, target_count: c_int, target_datatype: MPI_Datatype, op: MPI_Op,  win: MPI_Win) -> c_int;*/
   pub fn MPI_Put(origin_addr: *const c_void, origin_count: c_int, origin_datatype: MPI_Datatype, target_rank: c_int, target_disp: MPI_Aint, target_count: c_int, target_datatype: MPI_Datatype, win: MPI_Win) -> c_int;
+  pub fn MPI_Accumulate(origin_addr: *const c_void, origin_count: c_int, origin_datatype: MPI_Datatype, target_rank: c_int, target_disp: MPI_Aint, target_count: c_int, target_datatype: MPI_Datatype, op: MPI_Op, win: MPI_Win) -> c_int;
 }

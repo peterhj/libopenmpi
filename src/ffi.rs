@@ -282,6 +282,9 @@ extern "C" {
   pub fn MPI_Finalize() -> c_int;
   pub fn MPI_Abort(comm: MPI_Comm, errorcode: c_int) -> c_int;
 
+  pub fn MPI_Alloc_mem(size: MPI_Aint, info: MPI_Info, baseptr: *mut *mut c_void) -> c_int;
+  pub fn MPI_Free_mem(base: *mut c_void) -> c_int;
+
   pub fn MPI_Comm_size(comm: MPI_Comm, size: *mut c_int) -> c_int;
   pub fn MPI_Comm_rank(comm: MPI_Comm, rank: *mut c_int) -> c_int;
   pub fn MPI_Comm_group(comm: MPI_Comm, group: *mut MPI_Group) -> c_int;

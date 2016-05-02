@@ -11,6 +11,7 @@ use std::iter::{repeat};
 use std::marker::{PhantomData};
 use std::mem::{size_of};
 use std::ptr::{null_mut};
+use std::slice::{from_raw_parts, from_raw_parts_mut};
 
 pub mod ffi;
 
@@ -53,6 +54,46 @@ pub struct MpiSumOp;
 impl MpiOp for MpiSumOp {
   fn op() -> MPI_Op {
     unsafe { MPI_Op::SUM() }
+  }
+}
+
+pub struct MpiMemory<T> {
+  base: *mut T,
+  len:  usize,
+}
+
+impl<T> Drop for MpiMemory<T> {
+  fn drop(&mut self) {
+    let code = unsafe { MPI_Free_mem(self.base as *mut _) };
+    if code != 0 {
+      panic!("MPI_Free_mem failed: {}", code);
+    }
+  }
+}
+
+impl<T> MpiMemory<T> {
+  pub fn alloc_(len: usize) -> Result<MpiMemory<T>, c_int> {
+    let mut base = null_mut();
+    let code = unsafe { MPI_Alloc_mem(MPI_Aint((size_of::<T>() * len) as AintTy), MPI_Info::NULL(), &mut base as *mut *mut T as *mut *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiMemory{
+      base: base,
+      len:  len,
+    })
+  }
+}
+
+impl<T> AsRef<[T]> for MpiMemory<T> {
+  fn as_ref(&self) -> &[T] {
+    unsafe { from_raw_parts(self.base as *const T, self.len) }
+  }
+}
+
+impl<T> AsMut<[T]> for MpiMemory<T> {
+  fn as_mut(&mut self) -> &mut [T] {
+    unsafe { from_raw_parts_mut(self.base, self.len) }
   }
 }
 
@@ -303,35 +344,40 @@ impl MpiRequest {
 }
 
 pub struct MpiRequestList {
-  reqs: Vec<MPI_Request>,
+  reqs:   Vec<MPI_Request>,
+  stats:  Vec<MPI_Status>,
   //_marker:  PhantomData<T>,
 }
 
 impl MpiRequestList {
   pub fn new() -> MpiRequestList {
     MpiRequestList{
-      reqs: vec![],
+      reqs:   vec![],
+      stats:  vec![],
       //_marker:  PhantomData,
     }
   }
 
   pub fn clear(&mut self) {
     self.reqs.clear();
+    self.stats.clear();
   }
 
   pub fn append(&mut self, request: MpiRequest) {
     self.reqs.push(request.inner);
+    self.stats.push(MPI_Status::default());
   }
 
   pub fn wait_all(&mut self) -> Result<(), c_int> {
     if self.reqs.is_empty() {
       return Ok(());
     }
-    let code = unsafe { MPI_Waitall(self.reqs.len() as c_int, self.reqs.as_mut_ptr(), null_mut()) };
+    let code = unsafe { MPI_Waitall(self.reqs.len() as c_int, self.reqs.as_mut_ptr(), self.stats.as_mut_ptr()) };
     if code != 0 {
       return Err(code);
     }
     self.reqs.clear();
+    self.stats.clear();
     Ok(())
   }
 }
@@ -363,11 +409,11 @@ impl<T, Storage> Drop for MpiOwnedWindow<T, Storage> {
 }
 
 impl<T, Storage> MpiOwnedWindow<T, Storage> where Storage: AsMut<[T]> {
-  pub unsafe fn create_(mut buf: Storage) -> Result<MpiOwnedWindow<T, Storage>, c_int> {
-    let mut inner = MPI_Win::NULL();
+  pub fn create_(mut buf: Storage) -> Result<MpiOwnedWindow<T, Storage>, c_int> {
+    let mut inner = unsafe { MPI_Win::NULL() };
     {
       let mut buf = buf.as_mut();
-      let code = MPI_Win_create(buf.as_mut_ptr() as *mut _, MPI_Aint((size_of::<T>() * buf.len()) as AintTy), size_of::<T>() as c_int, MPI_Info::NULL(), MPI_Comm::WORLD(), &mut inner as *mut _);
+      let code = unsafe { MPI_Win_create(buf.as_mut_ptr() as *mut _, MPI_Aint((size_of::<T>() * buf.len()) as AintTy), size_of::<T>() as c_int, unsafe { MPI_Info::NULL() }, MPI_Comm::WORLD(), &mut inner as *mut _) };
       if code != 0 {
         return Err(code);
       }
@@ -377,6 +423,10 @@ impl<T, Storage> MpiOwnedWindow<T, Storage> where Storage: AsMut<[T]> {
       inner:    inner,
       _marker:  PhantomData,
     })
+  }
+
+  pub fn as_mut_slice(&mut self) -> &mut [T] {
+    self.buf.as_mut()
   }
 
   pub fn fence(&self, /*_flag: MpiOwnedWindowFenceFlag*/) -> Result<(), c_int> {
@@ -519,6 +569,8 @@ pub struct MpiWindow<T> {
   inner:    MPI_Win,
 }
 
+unsafe impl<T> Send for MpiWindow<T> {}
+
 impl<T> Drop for MpiWindow<T> {
   fn drop(&mut self) {
     // FIXME(20160415): need to do a fence before freeing, otherwise it will
@@ -527,8 +579,6 @@ impl<T> Drop for MpiWindow<T> {
     unsafe { MPI_Win_free(&mut self.inner as *mut _) };
   }
 }
-
-unsafe impl<T> Send for MpiWindow<T> {}
 
 impl<T> MpiWindow<T> {
   pub unsafe fn create_(buf_addr: *mut T, buf_len: usize) -> Result<MpiWindow<T>, c_int> {

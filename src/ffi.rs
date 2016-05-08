@@ -174,12 +174,12 @@ pub struct MPI_Group(pub *mut ompi_group_t);
 //pub const MPI_GROUP_EMPTY:  MPI_Group = MPI_Group(0x48000000);
 
 impl MPI_Group {
-  pub unsafe fn NULL() -> MPI_Group {
-    MPI_Group(transmute(&ompi_mpi_group_null))
+  pub fn NULL() -> MPI_Group {
+    unsafe { MPI_Group(transmute(&ompi_mpi_group_null)) }
   }
 
-  pub unsafe fn EMPTY() -> MPI_Group {
-    MPI_Group(transmute(&ompi_mpi_group_empty))
+  pub fn EMPTY() -> MPI_Group {
+    unsafe { MPI_Group(transmute(&ompi_mpi_group_empty)) }
   }
 }
 
@@ -288,6 +288,7 @@ extern "C" {
   pub fn MPI_Comm_size(comm: MPI_Comm, size: *mut c_int) -> c_int;
   pub fn MPI_Comm_rank(comm: MPI_Comm, rank: *mut c_int) -> c_int;
   pub fn MPI_Comm_group(comm: MPI_Comm, group: *mut MPI_Group) -> c_int;
+  pub fn MPI_Comm_create(comm: MPI_Comm, group: MPI_Group, newcomm: *mut MPI_Comm) -> c_int;
 
   pub fn MPI_Send(buf: *const c_void, count: c_int, datatype: MPI_Datatype, dest: c_int, tag: c_int, comm: MPI_Comm) -> c_int;
   pub fn MPI_Probe(source: c_int, tag: c_int, comm: MPI_Comm, status: *mut MPI_Status) -> c_int;
@@ -310,7 +311,8 @@ extern "C" {
   pub fn MPI_Bcast(buf: *mut c_void, count: c_int, datatype: MPI_Datatype, root: c_int, comm: MPI_Comm) -> c_int;
   pub fn MPI_Allreduce(sendbuf: *const c_void, recvbuf: *mut c_void, count: c_int, datatype: MPI_Datatype, op: MPI_Op, comm: MPI_Comm) -> c_int;
 
-  pub fn MPI_Ibcast(buf: *const c_void, count: c_int, datatype: MPI_Datatype, root: c_int, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
+  pub fn MPI_Ibcast(buf: *mut c_void, count: c_int, datatype: MPI_Datatype, root: c_int, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
+  pub fn MPI_Ireduce(sendbuf: *const c_void, recvbuf: *mut c_void, count: c_int, datatype: MPI_Datatype, op: MPI_Op, root: c_int, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
   pub fn MPI_Iallreduce(sendbuf: *const c_void, recvbuf: *mut c_void, count: c_int, datatype: MPI_Datatype, op: MPI_Op, comm: MPI_Comm, request: *mut MPI_Request) -> c_int;
 
   pub fn MPI_Open_port(info: MPI_Info, port_name: *mut c_char) -> c_int;

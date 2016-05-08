@@ -126,6 +126,29 @@ impl MpiComm {
     }
   }
 
+  pub fn group_(&self) -> Result<MpiGroup, c_int> {
+    let mut group = unsafe { MPI_Group::NULL() };
+    let code = unsafe { MPI_Comm_group(self.inner, &mut group as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiGroup{
+      inner:  group,
+    })
+  }
+
+  pub fn create_(&self, group: &MpiGroup) -> Result<MpiComm, c_int> {
+    let mut newcomm = unsafe { MPI_Comm::NULL() };
+    let code = unsafe { MPI_Comm_create(self.inner, group.inner, &mut newcomm as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiComm{
+      inner:    newcomm,
+      predef:   false,
+    })
+  }
+
   pub fn accept(port_name: &CStr) -> Result<MpiComm, c_int> {
     let mut inner = unsafe { MPI_Comm::NULL() };
     let code = unsafe { MPI_Comm_accept(port_name.as_ptr(), MPI_Info::NULL(), 0, MPI_Comm::SELF(), &mut inner as *mut _) };
@@ -204,6 +227,38 @@ impl MpiComm {
       //_marker: PhantomData,
     })
   }
+
+  pub fn nonblocking_broadcast_<T>(&mut self, buf: &mut [T], root: usize) -> Result<MpiRequest, c_int>
+  where T: MpiData {
+    let mut req = unsafe { MPI_Request::NULL() };
+    let code = unsafe { MPI_Ibcast(buf.as_mut_ptr() as *mut c_void, buf.len() as c_int, T::datatype(), root as c_int, self.inner, &mut req as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiRequest{inner: req})
+  }
+
+  pub fn nonblocking_reduce_<T, Op>(&mut self, src_buf: &[T], dst_buf: &mut [T], _op: Op, root: usize) -> Result<MpiRequest, c_int>
+  where T: MpiData, Op: MpiOp {
+    assert_eq!(src_buf.len(), dst_buf.len());
+    let mut req = unsafe { MPI_Request::NULL() };
+    let code = unsafe { MPI_Ireduce(src_buf.as_ptr() as *const c_void, dst_buf.as_mut_ptr() as *mut c_void, src_buf.len() as c_int, T::datatype(), Op::op(), root as c_int, self.inner, &mut req as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiRequest{inner: req})
+  }
+
+  pub fn nonblocking_allreduce_<T, Op>(&mut self, src_buf: &[T], dst_buf: &mut [T], _op: Op) -> Result<MpiRequest, c_int>
+  where T: MpiData, Op: MpiOp {
+    assert_eq!(src_buf.len(), dst_buf.len());
+    let mut req = unsafe { MPI_Request::NULL() };
+    let code = unsafe { MPI_Iallreduce(src_buf.as_ptr() as *const c_void, dst_buf.as_mut_ptr() as *mut c_void, src_buf.len() as c_int, T::datatype(), Op::op(), self.inner, &mut req as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiRequest{inner: req})
+  }
 }
 
 pub struct MpiGroup {
@@ -211,7 +266,11 @@ pub struct MpiGroup {
 }
 
 impl MpiGroup {
-  pub fn ranges(&self, ranges: &[(usize, usize, usize)]) -> MpiGroup {
+  pub fn empty_() -> MpiGroup {
+    MpiGroup{inner: MPI_Group::EMPTY()}
+  }
+
+  pub fn ranges(&self, ranges: &[(usize, usize, usize)]) -> Result<MpiGroup, c_int> {
     let mut c_ranges: Vec<c_int> = Vec::with_capacity(3 * ranges.len());
     for i in 0 .. ranges.len() {
       c_ranges.push(ranges[i].0 as c_int);
@@ -219,8 +278,11 @@ impl MpiGroup {
       c_ranges.push(ranges[i].2 as c_int);
     }
     let mut new_inner = unsafe { MPI_Group::NULL() };
-    unsafe { MPI_Group_range_incl(self.inner, ranges.len() as c_int, c_ranges.as_mut_ptr(), &mut new_inner as *mut _) };
-    MpiGroup{inner: new_inner}
+    let code = unsafe { MPI_Group_range_incl(self.inner, ranges.len() as c_int, c_ranges.as_mut_ptr(), &mut new_inner as *mut _) };
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(MpiGroup{inner: new_inner})
   }
 }
 

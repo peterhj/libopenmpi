@@ -62,6 +62,8 @@ pub struct MpiMemory<T> {
   len:  usize,
 }
 
+unsafe impl<T> Send for MpiMemory<T> where T: Send {}
+
 impl<T> Drop for MpiMemory<T> {
   fn drop(&mut self) {
     let code = unsafe { MPI_Free_mem(self.base as *mut _) };
@@ -461,6 +463,8 @@ pub struct MpiOwnedWindow<T, Storage> {
   _marker:  PhantomData<T>,
 }
 
+unsafe impl<T, Storage> Send for MpiOwnedWindow<T, Storage> where T: Send, Storage: Send {}
+
 impl<T, Storage> Drop for MpiOwnedWindow<T, Storage> {
   fn drop(&mut self) {
     // FIXME(20160415): need to do a fence before freeing, otherwise it will
@@ -565,6 +569,22 @@ impl<T, Storage> MpiOwnedWindow<T, Storage> where Storage: AsMut<[T]> {
 }
 
 impl<T, Storage> MpiOwnedWindow<T, Storage> where T: MpiData, Storage: AsRef<[T]> {
+  pub unsafe fn compare_and_swap_(&self, origin_addr: *const T, compare_addr: *const T, result_addr: *mut T, target_rank: usize, target_offset: usize) -> Result<(), c_int> {
+    let code = MPI_Compare_and_swap(
+        origin_addr as *const _,
+        compare_addr as *const _,
+        result_addr as *mut _,
+        T::datatype(),
+        target_rank as c_int,
+        MPI_Aint(target_offset as AintTy),
+        self.inner,
+    );
+    if code != 0 {
+      return Err(code);
+    }
+    Ok(())
+  }
+
   pub unsafe fn get_(&self, origin_addr: *mut T, origin_len: usize, target_rank: usize, target_offset: usize) -> Result<(), c_int> {
     let buf_len = self.buf.as_ref().len();
     assert!(origin_len <= buf_len);

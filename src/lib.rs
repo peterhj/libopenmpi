@@ -474,7 +474,7 @@ impl<T, Storage> Drop for MpiOwnedWindow<T, Storage> {
   }
 }
 
-impl<T, Storage> MpiOwnedWindow<T, Storage> where Storage: AsMut<[T]> {
+impl<T, Storage> MpiOwnedWindow<T, Storage> where Storage: AsRef<[T]> + AsMut<[T]> {
   pub fn create_(mut buf: Storage) -> Result<MpiOwnedWindow<T, Storage>, c_int> {
     let mut inner = unsafe { MPI_Win::NULL() };
     {
@@ -489,6 +489,10 @@ impl<T, Storage> MpiOwnedWindow<T, Storage> where Storage: AsMut<[T]> {
       inner:    inner,
       _marker:  PhantomData,
     })
+  }
+
+  pub fn as_slice(&mut self) -> &[T] {
+    self.buf.as_ref()
   }
 
   pub fn as_mut_slice(&mut self) -> &mut [T] {
